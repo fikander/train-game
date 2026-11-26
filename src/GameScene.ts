@@ -350,10 +350,10 @@ export class GameScene extends Phaser.Scene {
       if (!t || !t.dragged) return;
       obj.setPosition(x, y - 20);
     });
-    this.input.on('dragend', (_p: Phaser.Input.Pointer, obj: Phaser.GameObjects.Container) => {
+    this.input.on('dragend', (p: Phaser.Input.Pointer, obj: Phaser.GameObjects.Container) => {
       const t = obj.getData('token') as Token | undefined;
       if (!t || !t.dragged) return;
-      this.dropToken(t);
+      this.dropToken(t, p.worldX, p.worldY);
     });
     this.input.on('gameobjectup', (_p: Phaser.Input.Pointer, obj: Phaser.GameObjects.GameObject) => {
       const t = obj.getData?.('token') as Token | undefined;
@@ -376,9 +376,9 @@ export class GameScene extends Phaser.Scene {
     return best;
   }
 
-  private dropToken(t: Token) {
+  private dropToken(t: Token, px: number, py: number) {
     const c = t.c;
-    const gap = this.nearestGap(c.x, c.y + 20, t);
+    const gap = this.nearestGap(px, py, t);
     if (t.cell) { this.grid.delete(t.cell); t.cell = null; }
     if (gap && gap.type === t.type) {
       const k = key(gap.x, gap.y);
