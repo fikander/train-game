@@ -9,7 +9,9 @@ import { drawForest, drawPond, drawStream } from './terrain';
 
 const T = 120; // map track cell size in px
 const INK = 0x2d2a3e;
-const BOX_W = 330, BOX_H = 226;
+const BOX_W = 280, BOX_H = 188;
+const XS = [2.0, 4.9, 7.8, 10.7, 13.6]; // box centres along a row, in cells
+const GAP = (XS[1] - XS[0]) / 2; // the engine parks halfway between boxes
 
 /**
  * The map: one box per level, joined by a railway that snakes across the screen.
@@ -20,6 +22,7 @@ export class MapScene extends Phaser.Scene {
   private boxD: number[] = []; // distance along the trail of each box centre
   private engine: Phaser.GameObjects.Image[] = [];
   private busy = false;
+  boxPos: { x: number; y: number }[] = [];
 
   constructor() { super('map'); }
 
@@ -33,11 +36,12 @@ export class MapScene extends Phaser.Scene {
     const allDone = solved.size === LEVELS.length;
 
     // boxes (drawn above the track, so the line runs into and out of each one)
+    this.boxPos = track.boxes.map(b => ({ x: b.x * T, y: b.y * T }));
     const boxes = track.boxes.map((b, i) => this.drawBox(i, b.x * T, b.y * T, solved.has(i), isUnlocked(i, solved), i === target && !allDone));
 
     // the little engine waits just before the next level's box
-    const parkD = (i: number) => this.boxD[i] - 1.8;
-    const endD = allDone ? this.boxD[LEVELS.length - 1] + 1.8 : parkD(target);
+    const parkD = (i: number) => this.boxD[i] - GAP;
+    const endD = allDone ? this.boxD[LEVELS.length - 1] + GAP : parkD(target);
     const won = data.won && data.from !== undefined;
     const startD = won ? parkD(data.from!) : endD;
     this.makeEngine();
@@ -47,7 +51,7 @@ export class MapScene extends Phaser.Scene {
       const from = data.from!;
       this.time.delayedCall(450, () => {
         this.starPop(boxes[from].x, boxes[from].y);
-        sfx.whistle();
+        sfx.toot();
       });
       const dist = endD - startD;
       let beat = 0;
@@ -75,17 +79,17 @@ export class MapScene extends Phaser.Scene {
     g.fillStyle(0x7cc85a).fillRect(0, 0, W, H);
     for (let i = 0; i < 70; i++) g.fillStyle(rnd.pick([0x86d063, 0x72bd50, 0x8ad668]), 0.75).fillCircle(rnd.between(0, W), rnd.between(0, H), rnd.between(40, 120));
     for (let i = 0; i < 900; i++) g.fillStyle(rnd.pick([0x4f8f36, 0x9ee07a]), 0.55).fillCircle(rnd.between(0, W), rnd.between(0, H), rnd.between(1, 3));
-    // a stream wanders between the two rows into a pond
+    // a stream wanders between the first two rows; a pond and forests between the next two
     const pts: { x: number; y: number }[] = [];
-    for (let x = -40; x <= 1500; x += 60) pts.push({ x, y: 660 + Math.sin(x / 210) * 34 });
-    drawStream(g, pts, 46);
-    drawPond(g, [{ x: 1550, y: 650 }, { x: 1680, y: 650 }], 130, rnd);
-    // forests along the top and bottom edges and in the corners
-    const clumps: [number, number, number][] = [[80, 120, 4], [560, 70, 3], [1080, 90, 5], [1480, 70, 3], [1860, 100, 3], [70, 1130, 4], [560, 1150, 3], [1020, 1140, 5], [1460, 1150, 4], [1860, 1120, 3]];
+    for (let x = -40; x <= 1960; x += 60) pts.push({ x, y: 362 + Math.sin(x / 230) * 26 });
+    drawStream(g, pts, 40);
+    drawPond(g, [{ x: 1230, y: 720 }, { x: 1350, y: 720 }], 120, rnd);
+    const clumps: [number, number, number][] = [[300, 720, 4], [760, 730, 3], [1650, 720, 3], [200, 40, 3], [900, 30, 4], [1500, 40, 3],
+      [300, 1120, 4], [800, 1140, 3], [1250, 1110, 5], [1700, 1130, 4], [1840, 1000, 2]];
     for (const [x, y, n] of clumps) {
       const cells = [{ x, y }];
-      for (let i = 1; i < n; i++) cells.push({ x: x + rnd.between(-110, 110), y: y + rnd.between(-40, 40) });
-      drawForest(g, cells, 120, rnd);
+      for (let i = 1; i < n; i++) cells.push({ x: x + rnd.between(-110, 110), y: y + rnd.between(-30, 30) });
+      drawForest(g, cells, 110, rnd);
     }
     g.generateTexture('mapbg', W, H);
     g.destroy();
@@ -99,20 +103,29 @@ export class MapScene extends Phaser.Scene {
     const C = (x: number, y: number, rot: number) => pieces.push({ type: 'curve', x, y, rot, fixed: true });
     const add = (x: number, y: number, a: Dir, b: Dir) => this.trail.add(cellPath(x, y, a, b));
     this.trail = new Trail();
-    for (let x = 0; x <= 14; x++) { S(x, 3, 0); add(x, 3, 3, 1); }
-    C(15, 3, 2); add(15, 3, 3, 2);
-    for (let y = 4; y <= 6; y++) { S(15, y, 1); add(15, y, 0, 2); }
-    C(15, 7, 3); add(15, 7, 0, 3);
-    for (let x = 14; x >= 1; x--) { S(x, 7, 0); add(x, 7, 1, 3); }
+    // row 1 left to right, down the right side, row 4 right to left, down the left side, row 7 left to right
+    for (let x = 0; x <= 14; x++) { S(x, 1, 0); add(x, 1, 3, 1); }
+    C(15, 1, 2); add(15, 1, 3, 2);
+    for (let y = 2; y <= 3; y++) { S(15, y, 1); add(15, y, 0, 2); }
+    C(15, 4, 3); add(15, 4, 0, 3);
+    for (let x = 14; x >= 1; x--) { S(x, 4, 0); add(x, 4, 1, 3); }
+    C(0, 4, 1); add(0, 4, 1, 2);
+    for (let y = 5; y <= 6; y++) { S(0, y, 1); add(0, y, 0, 2); }
+    C(0, 7, 0); add(0, 7, 0, 1);
+    for (let x = 1; x <= 14; x++) { S(x, 7, 0); add(x, 7, 3, 1); }
     for (const p of pieces) {
       const g = this.add.graphics().setDepth(2).setPosition((p.x + 0.5) * T, (p.y + 0.5) * T);
       drawPiece(g, p, T);
     }
     // buffer stop at the far end of the line
-    const b = this.add.graphics().setDepth(3).setPosition(1 * T + 14, 7.5 * T);
+    const b = this.add.graphics().setDepth(3).setPosition(15 * T - 14, 7.5 * T);
     b.fillStyle(INK).fillRoundedRect(-14, -46, 28, 92, 8).fillStyle(0xe8483f).fillRoundedRect(-9, -41, 18, 82, 6);
 
-    const boxes = [2.2, 5.8, 9.4, 13].map(x => ({ x, y: 3.5 })).concat([13, 9.4, 5.8].map(x => ({ x, y: 7.5 })));
+    const rows = [1.5, 4.5, 7.5];
+    const boxes = LEVELS.map((_, i) => {
+      const r = Math.floor(i / XS.length), k = i % XS.length;
+      return { x: r % 2 === 0 ? XS[k] : XS[XS.length - 1 - k], y: rows[r] };
+    });
     // distance along the trail of each box centre
     this.boxD = boxes.map(b => {
       let best = 0, bestErr = Infinity;
@@ -193,7 +206,7 @@ export class MapScene extends Phaser.Scene {
   }
 
   private makeEngine() {
-    const k = T / REF * 0.7;
+    const k = T / REF * 0.6;
     const lift = VEH.engine.lift * T;
     this.engine = [
       this.add.image(0, 0, 'engine-base').setScale(k * 1.02).setTint(0x1d3d14).setAlpha(0.28).setDepth(16),

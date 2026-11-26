@@ -112,7 +112,6 @@ export class GameScene extends Phaser.Scene {
   private depart: { trail: Trail; d: number; exitD: number; speed: number } | null = null;
   private smoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   private puffTimer = 0;
-  private puffCount = 0;
   private idle = 0;
   private hand!: Phaser.GameObjects.Text;
   private goBtn!: Phaser.GameObjects.Container;
@@ -180,7 +179,7 @@ export class GameScene extends Phaser.Scene {
 
     this.cameras.main.fadeIn(400, 124, 200, 90);
     this.time.delayedCall(500, () => {
-      sfx.whistle();
+      sfx.bell();
       for (const m of this.movers) {
         const v = m.v;
         const { x, y, angle } = v;
@@ -605,7 +604,7 @@ export class GameScene extends Phaser.Scene {
   private pressGo() {
     this.idle = 0;
     this.hideHand();
-    sfx.whistle();
+    sfx.toot();
     if (this.mode !== 'edit') return;
     if (this.goPulse) { this.goPulse.stop(); this.goPulse = undefined; this.goBtn.setScale(1); }
     this.mode = 'run';
@@ -620,6 +619,7 @@ export class GameScene extends Phaser.Scene {
     const out = p ? traverse(p, entry) : null;
     if (!p || out === null) { m.state = 'stop'; m.speed = 0; return; }
     m.trail.add(cellPath(x, y, entry, out));
+    sfx.wheels();
     m.pending = { x: x + DX[out], y: y + DY[out], dir: out };
   }
 
@@ -723,7 +723,6 @@ export class GameScene extends Phaser.Scene {
     const last = this.li === LEVELS.length - 1;
     markSolved(this.li);
     sfx.tada();
-    sfx.whistle();
     const colors = [0xff6fa5, 0xffd23f, 0x4aa3df, 0x3fcf6f, 0xff8a3d, 0xa78bfa];
     const conf = this.add.particles(0, 0, 'confetti', {
       x: { min: 0, max: W }, y: -30, lifespan: 4000, speedY: { min: 250, max: 600 }, speedX: { min: -120, max: 120 },
@@ -779,10 +778,11 @@ export class GameScene extends Phaser.Scene {
     const moving = this.mode === 'depart';
     this.puffTimer -= dt;
     if (this.puffTimer > 0) return;
-    this.puffTimer = moving ? 0.18 : 0.8;
+    // chuffs start slow and speed up as the train gets going
+    this.puffTimer = moving ? Math.max(0.16, 0.5 - (this.depart?.speed ?? 0) * 0.2) : 0.8;
     const sp = this.engine.smokePoint;
     this.smoke.emitParticleAt(sp.x, sp.y, 1);
-    if (moving && this.puffCount++ % 2 === 0) sfx.chuff();
+    if (moving) sfx.chuff();
   }
 
   private checkContacts() {
