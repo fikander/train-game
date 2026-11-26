@@ -93,7 +93,6 @@ function steamWhistle(freqs: number[], blasts: [number, number][], vol = 0.1) {
 }
 
 let chuffN = 0;
-let lastWheel = 0;
 
 export const sfx = {
   /** The big departure whistle: a different one each time. */
@@ -124,14 +123,6 @@ export const sfx = {
     const strong = chuffN++ % 2 === 0;
     noise(vary(strong ? 0.14 : 0.09, 0.2), vary(strong ? 650 : 950, 0.25), 0.7, strong ? 0.2 : 0.11);
     if (strong) tone(vary(90, 0.1), 0.09, 'sine', 0.12, 50);
-  },
-  /** Wheels over a rail joint: clickety-clack, kept quiet and not too often. */
-  wheels() {
-    if (!ctx) return;
-    if (ctx.currentTime - lastWheel < 0.22) return;
-    lastWheel = ctx.currentTime;
-    const f = vary(2200, 0.15);
-    noise(0.03, f, 3, 0.07); noise(0.03, f * 0.9, 3, 0.06, 0.09);
   },
   clunk() { pick([() => { tone(180, 0.18, 'square', 0.12, 60); noise(0.08, 400, 1, 0.25); }, () => { tone(140, 0.2, 'square', 0.1, 50); noise(0.06, 600, 1.5, 0.22); noise(0.05, 300, 1, 0.18, 0.07); }])(); },
   clack() { tone(vary(620, 0.06), 0.06, 'triangle', 0.25, 300); noise(0.04, 2500, 2, 0.2); },

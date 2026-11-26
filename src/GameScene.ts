@@ -5,13 +5,12 @@ import { REF, VEH, dirAngle, drawPiece, drawSwitchMarker, makeTextures } from '.
 import { sfx, isMuted, setMuted } from './audio';
 import { markSolved, nextLevel } from './progress';
 import { drawForest, drawMeadow, drawPond, regions, type Cell } from './terrain';
+import { CAR_L, ENG_L, SCALE, SPEED, TrainSim, junctionKeys, key, makeMover, type SimMover } from './sim';
+import { solvedLevels } from './progress';
 
 export const W = 1920, H = 1200;
 const BOARD_TOP = 60, BOARD_BOTTOM = 950, TRAY_Y = 1080, TOKEN = 170;
-const BACK = 2; // invisible track behind each carriage's start
-const SCALE = 0.9; // vehicle size relative to a cell
-const ENG_L = VEH.engine.w / REF * SCALE + 0.02, CAR_L = VEH.car.w / REF * SCALE + 0.03;
-const SPEED = 1.7, REV_SPEED = 2.6;
+const REV_SPEED = 2.6;
 
 type Mode = 'edit' | 'run' | 'pause' | 'rewind' | 'depart' | 'done';
 
@@ -25,17 +24,8 @@ interface Token {
   dragged: boolean;
 }
 
-interface Mover {
+interface Mover extends SimMover {
   v: Vehicle;
-  num: number;
-  trail: Trail;
-  d: number; // distance of the carriage's FRONT along its trail
-  d0: number;
-  len0: number;
-  start: { x: number; y: number; dir: Dir };
-  pending: { x: number; y: number; dir: Dir };
-  state: 'idle' | 'move' | 'stop' | 'coupled' | 'rewind';
-  speed: number;
 }
 
 /** A train vehicle seen from above: shadow + base (sides) on the ground, top lifted up the screen. */
@@ -85,7 +75,6 @@ class Vehicle {
   }
 }
 
-const key = (x: number, y: number) => `${x},${y}`;
 
 export function savedLevel(): number {
   try { return Math.min(LEVELS.length - 1, Math.max(0, parseInt(localStorage.getItem('choo.level') ?? '0', 10) || 0)); } catch { return 0; }
@@ -107,6 +96,7 @@ export class GameScene extends Phaser.Scene {
   private engine!: Vehicle;
   private enginePiece!: Piece;
   private movers: Mover[] = [];
+  private sim!: TrainSim<Mover>;
   private coupled: Mover[] = []; // in order of arrival: 1, 2, 3
   private mode: Mode = 'edit';
   private depart: { trail: Trail; d: number; exitD: number; speed: number } | null = null;
@@ -138,6 +128,9 @@ export class GameScene extends Phaser.Scene {
     for (const p of L.pieces) this.grid.set(key(p.x, p.y), { ...p });
     for (const p of this.grid.values()) if (p.type === 'car') p.buffer = !this.grid.has(key(p.x - DX[p.rot], p.y - DY[p.rot]));
     for (const g of L.gaps) this.gaps.set(key(g.x, g.y), g);
+    // switches where lines only join have nothing to set: they are drawn as plain junctions
+    for (const k of junctionKeys(L)) this.grid.get(k)!.junction = true;
+    this.sim = new TrainSim(this.grid, this.movers, this.coupled);
     this.drawBackground();
     for (const p of this.grid.values()) this.addPieceView(p);
     this.drawTray();
@@ -278,7 +271,7 @@ export class GameScene extends Phaser.Scene {
     const g = this.add.graphics().setDepth(2).setPosition(this.px(p.x + 0.5), this.py(p.y + 0.5));
     drawPiece(g, p, this.cell);
     this.pieceGfx.set(k, g);
-    if (p.type === 'switch') {
+    if (p.type === 'switch' && !p.junction) {
       const m = this.add.graphics().setDepth(3).setPosition(g.x, g.y);
       drawSwitchMarker(m, p, this.cell);
       this.markers.set(k, m);
@@ -288,11 +281,7 @@ export class GameScene extends Phaser.Scene {
     if (p.type === 'car' && p.car) {
       const v = new Vehicle(this, p.car, this.cell);
       v.setNumber(this, p.num ?? 1);
-      const d = p.rot as Dir, cx = p.x + 0.5, cy = p.y + 0.5;
-      const trail = new Trail();
-      trail.add([{ x: cx - DX[d] * BACK, y: cy - DY[d] * BACK }, { x: cx, y: cy }, { x: cx + DX[d] * 0.5, y: cy + DY[d] * 0.5 }]);
-      const start = { x: p.x + DX[d], y: p.y + DY[d], dir: d };
-      const m: Mover = { v, num: p.num ?? 1, trail, d: BACK + CAR_L / 2, d0: BACK + CAR_L / 2, len0: trail.length, start, pending: { ...start }, state: 'idle', speed: 0 };
+      const m: Mover = { ...makeMover(p), v };
       this.movers.push(m);
       this.placeMover(m);
     }
@@ -608,33 +597,12 @@ export class GameScene extends Phaser.Scene {
     if (this.mode !== 'edit') return;
     if (this.goPulse) { this.goPulse.stop(); this.goPulse = undefined; this.goBtn.setScale(1); }
     this.mode = 'run';
-    for (const m of this.movers) { m.state = 'move'; m.speed = 0; }
+    this.sim.start();
   }
 
-  /** The carriage's front reached the end of its known track: look at the next square. */
-  private advance(m: Mover) {
-    const { x, y, dir } = m.pending;
-    const p = this.grid.get(key(x, y));
-    const entry = opp(dir);
-    const out = p ? traverse(p, entry) : null;
-    if (!p || out === null) { m.state = 'stop'; m.speed = 0; return; }
-    m.trail.add(cellPath(x, y, entry, out));
-    sfx.wheels();
-    m.pending = { x: x + DX[out], y: y + DY[out], dir: out };
-  }
-
-  private frontOf(m: Mover) { return m.trail.at(m.d); }
-  private centreOf(m: Mover) { return m.trail.at(m.d - CAR_L / 2); }
-
-  /** Where the next carriage has to couple: the back of the engine, or the back of the last coupled carriage. */
-  private tailPoint() {
-    if (!this.coupled.length) {
-      const e = this.enginePiece, a = dirAngle(e.rot);
-      return { x: e.x + 0.5 - Math.cos(a) * ENG_L / 2, y: e.y + 0.5 - Math.sin(a) * ENG_L / 2 };
-    }
-    const last = this.coupled[this.coupled.length - 1];
-    return last.trail.at(last.d - CAR_L);
-  }
+  private frontOf(m: Mover) { return this.sim.frontOf(m); }
+  private centreOf(m: Mover) { return this.sim.centreOf(m); }
+  private tailPoint() { return this.sim.tailPoint(); }
 
   private bump(a: Mover, b: Mover | null) {
     (window as any).__bump = { a: a.num, b: b?.num ?? 'engine/order', fa: this.frontOf(a), tail: this.tailPoint(), cb: b ? this.centreOf(b) : null, ca: this.centreOf(a) };
@@ -654,7 +622,7 @@ export class GameScene extends Phaser.Scene {
   private startRewind() {
     this.mode = 'rewind';
     sfx.oops();
-    this.coupled = [];
+    this.coupled.length = 0;
     for (const m of this.movers) { m.state = 'rewind'; m.speed = 0; }
   }
 
@@ -671,9 +639,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private coupleOn(m: Mover) {
-    m.state = 'coupled';
-    m.speed = 0;
-    this.coupled.push(m);
     sfx.clunk();
     const t = this.frontOf(m);
     this.starBurst(this.px(t.x), this.py(t.y) - this.cell * 0.15);
@@ -720,20 +685,12 @@ export class GameScene extends Phaser.Scene {
     if (this.celebrateOnce) return;
     this.celebrateOnce = true;
     this.mode = 'done';
-    const last = this.li === LEVELS.length - 1;
+    // the happy whistle as the train left is the celebration; straight back to the map
+    const firstWin = !solvedLevels().has(this.li);
     markSolved(this.li);
-    sfx.tada();
-    const colors = [0xff6fa5, 0xffd23f, 0x4aa3df, 0x3fcf6f, 0xff8a3d, 0xa78bfa];
-    const conf = this.add.particles(0, 0, 'confetti', {
-      x: { min: 0, max: W }, y: -30, lifespan: 4000, speedY: { min: 250, max: 600 }, speedX: { min: -120, max: 120 },
-      rotate: { min: 0, max: 360 }, scale: { min: 0.8, max: 1.6 }, tint: colors, gravityY: 120, emitting: false,
-    }).setDepth(300);
-    conf.explode(last ? 400 : 180);
-    if (last) this.time.delayedCall(900, () => conf.explode(300));
-    for (let i = 0; i < (last ? 12 : 5); i++) this.time.delayedCall(i * 220, () => this.starBurst(Phaser.Math.Between(300, W - 300), Phaser.Math.Between(200, 800)));
-    // back to the map, where the little engine chugs on to the next box
-    this.time.delayedCall(last ? 5000 : 3000, () => this.goToMap(true));
+    this.time.delayedCall(400, () => this.goToMap(firstWin));
   }
+
 
   private sparkle(x: number, y: number) {
     for (let i = 0; i < 6; i++) {
@@ -785,52 +742,13 @@ export class GameScene extends Phaser.Scene {
     if (moving) sfx.chuff();
   }
 
-  private checkContacts() {
-    const tail = this.tailPoint();
-    const next = this.coupled.length + 1;
-    for (const m of this.movers) {
-      if (m.state !== 'move' && m.state !== 'stop') continue;
-      const f = this.frontOf(m);
-      if (Math.hypot(f.x - tail.x, f.y - tail.y) < 0.14) {
-        if (m.num === next) { this.coupleOn(m); return; }
-        this.bump(m, null); // wrong order: a soft bump, then everyone rolls back
-        return;
-      }
-    }
-    // carriages bumping into each other
-    const lim = CAR_L * 0.82;
-    for (let i = 0; i < this.movers.length; i++) for (let j = i + 1; j < this.movers.length; j++) {
-      const a = this.movers[i], b = this.movers[j];
-      if (a.state !== 'move' && b.state !== 'move') continue;
-      const pa = this.centreOf(a), pb = this.centreOf(b);
-      if (Math.hypot(pa.x - pb.x, pa.y - pb.y) < lim) { this.bump(a.state === 'move' ? a : b, a.state === 'move' ? b : a); return; }
-    }
-    // carriages bumping into the engine from the wrong side
-    const e = { x: this.enginePiece.x + 0.5, y: this.enginePiece.y + 0.5 };
-    for (const m of this.movers) {
-      if (m.state !== 'move') continue;
-      const c = this.centreOf(m);
-      if (Math.hypot(c.x - e.x, c.y - e.y) < (ENG_L + CAR_L) / 2 * 0.8) { this.bump(m, null); return; }
-    }
-  }
-
   update(time: number, deltaMs: number) {
     const dt = Math.min(0.05, deltaMs / 1000);
     if (this.mode === 'run') {
-      for (const m of this.movers) {
-        if (m.state !== 'move') continue;
-        m.speed = Math.min(SPEED, m.speed + 2.5 * dt);
-        m.d += m.speed * dt;
-        let guard = 0;
-        while (m.state === 'move' && m.d >= m.trail.length && guard++ < 4) {
-          const over = m.d - m.trail.length;
-          m.d = m.trail.length;
-          this.advance(m);
-          if (m.state === 'move') m.d += over;
-        }
-      }
-      this.checkContacts();
-      if (this.mode === 'run' && !this.movers.some(m => m.state === 'move') && this.coupled.length < this.movers.length) {
+      const ev = this.sim.step(dt);
+      if (ev?.type === 'couple') this.coupleOn(ev.m);
+      else if (ev?.type === 'bump') this.bump(ev.a, ev.b);
+      else if (ev?.type === 'stuck') {
         // everyone has stopped but the train isn't complete: roll back and try again
         this.mode = 'pause';
         sfx.wobble();

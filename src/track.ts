@@ -24,6 +24,7 @@ export interface Piece {
   car?: CarKind;
   num?: number;
   buffer?: boolean; // draw a buffer stop behind it
+  junction?: boolean; // switch where lines only join: nothing to set
 }
 
 /** Sides of a piece that connect to neighbours (used for auto-rotate and drawing). */

@@ -46,24 +46,23 @@ export class MapScene extends Phaser.Scene {
     const startD = won ? parkD(data.from!) : endD;
     this.makeEngine();
     this.placeEngine(startD);
+    // only after a first-time win: a quick hop on to the next box (taps still work meanwhile)
     if (won) {
-      this.busy = true;
       const from = data.from!;
-      this.time.delayedCall(450, () => {
+      this.time.delayedCall(150, () => {
         this.starPop(boxes[from].x, boxes[from].y);
         sfx.toot();
       });
       const dist = endD - startD;
       let beat = 0;
       this.tweens.addCounter({
-        from: startD, to: endD, delay: 1100, duration: Math.max(900, dist * 520), ease: 'Sine.InOut',
+        from: startD, to: endD, delay: 500, duration: Math.min(1400, Math.max(700, dist * 300)), ease: 'Sine.InOut',
         onUpdate: tw => {
           const d = tw.getValue() ?? startD;
           this.placeEngine(d);
           if (d - beat > 0.7) { beat = d; sfx.chuff(); }
         },
         onComplete: () => {
-          this.busy = false;
           if (!allDone) { sfx.pop(); this.starPop(boxes[target].x, boxes[target].y - BOX_H * 0.2); }
         },
       });

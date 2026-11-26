@@ -23,3 +23,7 @@ Built with Phaser 3, TypeScript and Vite. All art and sounds are generated in co
 ## Sounds
 
 All sounds are synthesised in code (`src/audio.ts`) with the Web Audio API, so there are no third-party audio files and nothing to credit. Each sound has a few variants and small random changes, so it doesn't repeat exactly: four steam whistles, two Go toots, a station bell, chuffs that alternate strong and soft and speed up, wheel clicks at rail joints, and four win tunes. If recorded CC0 sounds are added later, list each file with its source and licence here.
+
+## Tests
+
+`npm test` runs the level checks (`src/levels.test.ts`) against the same carriage logic the game uses (`src/sim.ts`), with no browser. For every level it checks that the level can be finished with the right pieces, that it can't be finished with the squares left empty, and that every real switch starts the wrong way so it has to be flipped. Switches where two lines only join are drawn as plain junctions with nothing to tap.

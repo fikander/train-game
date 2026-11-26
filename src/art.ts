@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { cellPath, opp, sides, type Dir, type Piece, type Pt } from './track';
 
-export const REF = 200; // texture resolution: pixels per grid cell
+import { REF, VEH } from './sim';
+export { REF, VEH };
 const INK = 0x2d2a3e;
 
 function make(scene: Phaser.Scene, key: string, w: number, h: number, draw: (g: Phaser.GameObjects.Graphics) => void) {
@@ -24,10 +25,6 @@ function outlinedCircle(g: Phaser.GameObjects.Graphics, x: number, y: number, r:
 // Vehicles are seen from high above. Each has a "base" (chassis + sides, drawn on the ground) and a "top"
 // (roof/boiler, drawn raised up the screen), which together give a chunky 3D look from any direction.
 // All face +x. Engine 200 x 110 px, carriages 172 x 104 px at REF scale.
-export const VEH = {
-  engine: { w: 200, h: 110, lift: 0.16 },
-  car: { w: 172, h: 104, lift: 0.15 },
-};
 
 function chassis(g: Phaser.GameObjects.Graphics, w: number, h: number, side: number, sideDark: number) {
   // couplers
@@ -260,6 +257,7 @@ export function drawPiece(g: Phaser.GameObjects.Graphics, p: Piece, s: number) {
       break;
     }
     case 'switch': {
+      if (p.junction) { drawRails(g, p.inDir!, p.out1!, s, true); drawRails(g, p.inDir!, p.out2!, s, true); break; }
       const active = p.state ? p.out2! : p.out1!;
       const inactive = p.state ? p.out1! : p.out2!;
       drawRails(g, p.inDir!, inactive, s, true, 0.45, 0x8e969e);
