@@ -13,7 +13,8 @@ describe.each(LEVELS.map((L, i) => [i + 1, L] as const))('level %i', (_n, L) => 
     const taken = new Set(L.pieces.map(p => key(p.x, p.y)));
     for (const g of L.gaps) expect(taken.has(key(g.x, g.y)), `gap ${g.x},${g.y}`).toBe(false);
     for (const p of [...L.pieces, ...L.gaps]) expect(p.x >= 0 && p.x < L.cols && p.y >= 0 && p.y < L.rows, `${p.x},${p.y} on board`).toBe(true);
-    expect(L.gaps.length + (L.spare?.length ?? 0)).toBeLessThanOrEqual(6); // fits the tray
+    expect(L.gaps.length + (L.spare?.length ?? 0)).toBeLessThanOrEqual(6);
+    expect(L.pieces.filter(p => p.tunnel).every(p => p.type === "straight")).toBe(true); // fits the tray
   });
 
   it('every gap piece joins up with its neighbours', () => {
@@ -66,4 +67,8 @@ describe('building your own way', () => {
     expect(fitRotation(grid, 2, 2, 'curve')).toBe(0); // from the line above round to the engine
     expect(fitRotation(new Map(), 1, 1, 'curve')).toBe(null); // open field: tap to turn
   });
+});
+
+it('has 30 levels, ten per biome', () => {
+  expect(LEVELS).toHaveLength(30);
 });

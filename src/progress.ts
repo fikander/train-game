@@ -29,3 +29,7 @@ export function nextLevel(solved = solvedLevels()) {
   for (let i = 0; i < LEVELS.length; i++) if (!solved.has(i)) return i;
   return LEVELS.length - 1;
 }
+
+/** Grown-up setting: faint shadows of the right track on each square. */
+export function hintsOn() { try { return localStorage.getItem('choo.hints') === '1'; } catch { return false; } }
+export function setHints(on: boolean) { try { localStorage.setItem('choo.hints', on ? '1' : '0'); } catch { /* ignore */ } }

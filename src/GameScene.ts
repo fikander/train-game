@@ -1,10 +1,11 @@
 import Phaser from 'phaser';
-import { LEVELS, type Gap, type Level } from './levels';
+import { LEVELS, biomeOf, type Biome, type Gap, type Level } from './levels';
 import { DX, DY, Trail, cellPath, opp, sides, traverse, type Dir, type Piece } from './track';
 import { REF, VEH, dirAngle, drawPiece, drawSwitchMarker, makeTextures } from './art';
-import { sfx, isMuted, setMuted } from './audio';
+import { sfx } from './audio';
 import { markSolved, nextLevel } from './progress';
-import { drawForest, drawMeadow, drawPond, regions, type Cell } from './terrain';
+import { PAL, drawForest, drawGround, drawHill, drawMeadow, drawPond, regions, type Cell } from './terrain';
+import { hintsOn } from './progress';
 import { CAR_L, ENG_L, SCALE, SPEED, TrainSim, fitRotation, junctionKeys, key, makeMover, type SimMover } from './sim';
 import { solvedLevels } from './progress';
 
@@ -96,6 +97,7 @@ export class GameScene extends Phaser.Scene {
   private engine!: Vehicle;
   private enginePiece!: Piece;
   private movers: Mover[] = [];
+  private biome: Biome = 'meadow';
   private blocked = new Set<string>(); // board squares with forest or water: pieces can't go there
   private sim!: TrainSim<Mover>;
   private coupled: Mover[] = []; // in order of arrival: 1, 2, 3
@@ -113,6 +115,7 @@ export class GameScene extends Phaser.Scene {
   init(data: { level?: number }) {
     this.li = Math.min(LEVELS.length - 1, Math.max(0, data.level ?? nextLevel()));
     this.L = LEVELS[this.li];
+    this.biome = biomeOf(this.li);
     this.grid = new Map(); this.gaps = new Map(); this.pieceGfx = new Map(); this.markers = new Map();
     this.tokens = []; this.movers = []; this.blocked = new Set(); this.coupled = []; this.depart = null;
     this.mode = 'edit'; this.idle = 0; this.goPulse = undefined; this.leaving = false; this.celebrateOnce = false;
@@ -136,8 +139,6 @@ export class GameScene extends Phaser.Scene {
     for (const p of this.grid.values()) this.addPieceView(p);
     this.drawTray();
     this.drawGoButton();
-    this.drawProgress();
-    this.drawParentCorner();
     this.drawHomeButton();
 
     // the engine waits at the end of the line
@@ -165,13 +166,19 @@ export class GameScene extends Phaser.Scene {
         drawPiece(g, { type: 'straight', x: cx, y: cy, rot: p.rot % 2 === 1 ? 0 : 1, fixed: true }, this.cell);
       }
     }
+    this.drawTunnels();
+    // grown-ups can turn on faint shadows of the track that fits each square
+    if (hintsOn()) for (const gp of L.gaps) {
+      const g = this.add.graphics().setDepth(1).setAlpha(0.16).setPosition(this.px(gp.x + 0.5), this.py(gp.y + 0.5));
+      drawPiece(g, { type: gp.type, x: 0, y: 0, rot: gp.rot, fixed: true }, this.cell);
+    }
 
     this.hand = this.add.text(0, 0, '👆', { fontSize: '120px' }).setOrigin(0.35, 0.05).setDepth(100).setVisible(false);
 
     this.setupInput();
 
 
-    this.cameras.main.fadeIn(400, 124, 200, 90);
+    this.cameras.main.fadeIn(400, ...PAL[this.biome].fade as [number, number, number]);
     this.time.delayedCall(500, () => {
       sfx.bell();
       for (const m of this.movers) {
@@ -181,6 +188,23 @@ export class GameScene extends Phaser.Scene {
       }
     });
     (window as any).__scene = this;
+  }
+
+  /** Hills over tunnel squares, drawn above the carriages so they disappear inside. */
+  private drawTunnels() {
+    const tun = [...this.grid.values()].filter(p => p.tunnel);
+    const keys = new Set(tun.map(p => key(p.x, p.y)));
+    for (const run of regions(tun.map(p => ({ x: p.x, y: p.y })))) {
+      const ends: { x: number; y: number; a: number }[] = [];
+      for (const c of run) {
+        for (const d of sides(this.grid.get(key(c.x, c.y))!)) {
+          if (keys.has(key(c.x + DX[d], c.y + DY[d]))) continue;
+          ends.push({ x: this.px(c.x + 0.5 + DX[d] * 0.5), y: this.py(c.y + 0.5 + DY[d] * 0.5), a: dirAngle(d) });
+        }
+      }
+      const g = this.add.graphics().setDepth(30);
+      drawHill(g, run.map(c => ({ x: this.px(c.x + 0.5), y: this.py(c.y + 0.5) })), this.cell, this.biome, ends);
+    }
   }
 
   // ---------- coordinates ----------
@@ -194,12 +218,11 @@ export class GameScene extends Phaser.Scene {
     const { cols, rows } = this.L, s = this.cell;
     const rnd0 = new Phaser.Math.RandomDataGenerator([`ground${this.li}`]);
     // textured grass: soft mottled patches + speckles
-    g.fillStyle(0x7cc85a).fillRect(0, 0, W, H);
-    for (let i = 0; i < 70; i++) g.fillStyle(rnd0.pick([0x86d063, 0x72bd50, 0x8ad668]), 0.75).fillCircle(rnd0.between(0, W), rnd0.between(0, H), rnd0.between(40, 120));
-    for (let i = 0; i < 900; i++) g.fillStyle(rnd0.pick([0x4f8f36, 0x9ee07a]), 0.55).fillCircle(rnd0.between(0, W), rnd0.between(0, H), rnd0.between(1, 3));
+    const P = PAL[this.biome];
+    drawGround(g, this.biome, rnd0, W, H);
     // the play area: slightly lighter, with thin hand-drawn grid lines
-    g.fillStyle(0xa6dd7c, 0.45).fillRoundedRect(this.ox - 10, this.oy - 10, cols * s + 20, rows * s + 20, 24);
-    g.lineStyle(3, 0x3f7a2c, 0.35);
+    g.fillStyle(P.board, 0.45).fillRoundedRect(this.ox - 10, this.oy - 10, cols * s + 20, rows * s + 20, 24);
+    g.lineStyle(3, P.lines, 0.35);
     for (let x = 0; x <= cols; x++) g.lineBetween(this.ox + x * s + rnd0.between(-2, 2), this.oy - 16, this.ox + x * s + rnd0.between(-2, 2), this.oy + rows * s + 16);
     for (let y = 0; y <= rows; y++) g.lineBetween(this.ox - 16, this.oy + y * s + rnd0.between(-2, 2), this.ox + cols * s + 16, this.oy + y * s + rnd0.between(-2, 2));
     // tray shelf (only when there are pieces to place)
@@ -229,7 +252,7 @@ export class GameScene extends Phaser.Scene {
     // big open areas get a mix: one pond, some plain grass, and forest in the rest
     for (const r of regions(empty)) {
       if (r.length === 1) {
-        if (rnd.frac() < 0.6) drawMeadow(g, centre(r[0]), s, rnd); else { drawForest(g, [centre(r[0])], s * 0.75, rnd); this.blocked.add(key(r[0].x, r[0].y)); }
+        if (rnd.frac() < 0.6) drawMeadow(g, centre(r[0]), s, rnd, this.biome); else { drawForest(g, [centre(r[0])], s * 0.75, rnd, this.biome); this.blocked.add(key(r[0].x, r[0].y)); }
         continue;
       }
       let rest = r;
@@ -241,16 +264,16 @@ export class GameScene extends Phaser.Scene {
           if (!next) break;
           pond.push(next);
         }
-        drawPond(g, pond.map(centre), s, rnd);
+        drawPond(g, pond.map(centre), s, rnd, this.biome);
         for (const c of pond) this.blocked.add(key(c.x, c.y));
         rest = r.filter(c => !pond.includes(c));
       }
       // plenty of open grass, so there is room to try other ways
       const grass = rest.filter(() => rnd.frac() < 0.45);
-      for (const c of grass) drawMeadow(g, centre(c), s, rnd);
+      for (const c of grass) drawMeadow(g, centre(c), s, rnd, this.biome);
       const trees = rest.filter(c => !grass.includes(c));
       for (const c of trees) this.blocked.add(key(c.x, c.y));
-      for (const f of regions(trees)) drawForest(g, f.map(centre), s * 0.9, rnd);
+      for (const f of regions(trees)) drawForest(g, f.map(centre), s * 0.9, rnd, this.biome);
     }
     // around the board: a few forests in the margins, kept clear of buttons, tray and the line out
     const exitRows = this.L.pieces.filter(p => p.type === 'exit').map(p => this.py(p.y + 0.5));
@@ -267,7 +290,7 @@ export class GameScene extends Phaser.Scene {
         x += rnd.pick([-1, 1, 0]) * ms * 0.7; y += rnd.pick([-1, 1, 0]) * ms * 0.6;
         if (free(x, y)) clump.push({ x, y });
       }
-      drawForest(g, clump, ms, rnd);
+      drawForest(g, clump, ms, rnd, this.biome);
     }
   }
 
@@ -331,65 +354,6 @@ export class GameScene extends Phaser.Scene {
     this.goBtn = c;
   }
 
-  private drawProgress() {
-    const n = LEVELS.length, gap = 40, x0 = W / 2 - ((n - 1) * gap) / 2;
-    const g = this.add.graphics().setDepth(5);
-    for (let i = 0; i < n; i++) {
-      const r = i === this.li ? 13 : 9;
-      g.fillStyle(0x2d6b2a, 0.35).fillCircle(x0 + i * gap, 30, r + 3);
-      g.fillStyle(i < this.li ? 0xffd23f : i === this.li ? 0xffffff : 0xb9e39b).fillCircle(x0 + i * gap, 30, r);
-    }
-  }
-
-  /** Grown-ups: hold the little gear for 1.5 s to open level select / sound. */
-  private drawParentCorner() {
-    const c = this.add.container(1872, 44).setDepth(200).setAlpha(0.45);
-    const g = this.add.graphics();
-    g.fillStyle(0x2d6b2a).fillCircle(0, 0, 26);
-    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; g.fillCircle(Math.cos(a) * 26, Math.sin(a) * 26, 8); }
-    g.fillStyle(0x7cc85a).fillCircle(0, 0, 11);
-    const ring = this.add.graphics();
-    c.add([g, ring]);
-    c.setSize(80, 80).setInteractive();
-    let timer: Phaser.Time.TimerEvent | null = null;
-    let t0 = 0;
-    const cancel = () => { timer?.remove(); timer = null; ring.clear(); };
-    c.on('pointerdown', () => {
-      t0 = this.time.now;
-      timer = this.time.addEvent({
-        delay: 30, loop: true, callback: () => {
-          const f = (this.time.now - t0) / 1500;
-          ring.clear().lineStyle(8, 0xffffff).beginPath().arc(0, 0, 40, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2).strokePath();
-          if (f >= 1) { cancel(); this.openParentMenu(); }
-        },
-      });
-    });
-    c.on('pointerup', cancel);
-    c.on('pointerout', cancel);
-  }
-
-  private openParentMenu() {
-    const layer = this.add.container(0, 0).setDepth(500);
-    const bg = this.add.rectangle(W / 2, H / 2, W, H, 0x1c2b1a, 0.82).setInteractive();
-    layer.add(bg);
-    LEVELS.forEach((_, i) => {
-      const x = W / 2 + ((i % 5) - 2) * 220, y = 420 + Math.floor(i / 5) * 230;
-      const b = this.add.container(x, y);
-      const g = this.add.graphics();
-      g.fillStyle(i === this.li ? 0xffd23f : 0xffffff).fillRoundedRect(-90, -90, 180, 180, 30);
-      const t = this.add.text(0, 0, String(i + 1), { fontFamily: 'Arial Rounded MT Bold, Arial, sans-serif', fontSize: '84px', color: '#2d6b2a', fontStyle: 'bold' }).setOrigin(0.5);
-      b.add([g, t]);
-      b.setSize(180, 180).setInteractive();
-      b.on('pointerup', () => this.gotoLevel(i));
-      layer.add(b);
-    });
-    const snd = this.add.text(W / 2 - 220, 940, isMuted() ? '🔇' : '🔊', { fontSize: '110px' }).setOrigin(0.5).setInteractive();
-    snd.on('pointerup', () => { setMuted(!isMuted()); snd.setText(isMuted() ? '🔇' : '🔊'); });
-    const close = this.add.text(W / 2 + 220, 940, '✖️', { fontSize: '110px' }).setOrigin(0.5).setInteractive();
-    close.on('pointerup', () => layer.destroy());
-    layer.add([snd, close]);
-  }
-
   /** House in the top-left corner: back to the map of all levels. */
   private drawHomeButton() {
     const c = this.add.container(86, 84).setDepth(200);
@@ -413,14 +377,11 @@ export class GameScene extends Phaser.Scene {
   private goToMap(won: boolean) {
     if (this.leaving) return;
     this.leaving = true;
-    this.cameras.main.fadeOut(300, 124, 200, 90);
+    this.cameras.main.fadeOut(300, ...PAL[this.biome].fade as [number, number, number]);
     this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('map', { from: this.li, won }));
   }
 
-  private gotoLevel(i: number) {
-    this.cameras.main.fadeOut(300, 124, 200, 90);
-    this.cameras.main.once('camerafadeoutcomplete', () => this.scene.restart({ level: i }));
-  }
+
 
   // ---------- input ----------
   private setupInput() {

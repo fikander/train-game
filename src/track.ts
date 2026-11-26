@@ -25,6 +25,7 @@ export interface Piece {
   num?: number;
   buffer?: boolean; // draw a buffer stop behind it
   junction?: boolean; // switch where lines only join: nothing to set
+  tunnel?: boolean; // straight under a hill: carriages disappear inside
 }
 
 /** Sides of a piece that connect to neighbours (used for auto-rotate and drawing). */
