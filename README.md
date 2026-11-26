@@ -27,3 +27,5 @@ All sounds are synthesised in code (`src/audio.ts`) with the Web Audio API, so t
 ## Tests
 
 `npm test` runs the level checks (`src/levels.test.ts`) against the same carriage logic the game uses (`src/sim.ts`), with no browser. For every level it checks that the level can be finished with the right pieces, that it can't be finished with the squares left empty, and that every real switch starts the wrong way so it has to be flipped. Switches where two lines only join are drawn as plain junctions with nothing to tap.
+
+Pieces can be dropped on any open grass square, not only the planned ones, so children can try their own way; only forests and water send a piece back to the tray. A dropped piece turns itself only when exactly one way round joins up with the track next to it; otherwise the child taps it to turn it 90 degrees. Placed pieces can be dragged again to move them or back to the tray.

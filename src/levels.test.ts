@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { LEVELS } from './levels';
-import { key, realSwitches, runLevel, solvedGrid } from './sim';
-import { sides, traverse } from './track';
+import { fitRotation, key, realSwitches, runLevel, solvedGrid } from './sim';
+import { sides, traverse, type Piece } from './track';
 
 describe.each(LEVELS.map((L, i) => [i + 1, L] as const))('level %i', (_n, L) => {
   const n = realSwitches(L).length;
@@ -41,5 +41,29 @@ describe.each(LEVELS.map((L, i) => [i + 1, L] as const))('level %i', (_n, L) => 
   it('does not finish with the squares left empty', () => {
     const empty = { ...L, gaps: [] };
     for (let c = 0; c < 1 << n; c++) expect(runLevel(empty, sw => sw.forEach((p, i) => { p.state = ((c >> i) & 1) as 0 | 1; }))).not.toBe('complete');
+  });
+});
+
+describe('building your own way', () => {
+  const car = { type: 'car' as const, x: 0, y: 0, rot: 1, num: 1, car: 'coal' as const, fixed: true };
+  const engine = { type: 'engine' as const, x: 3, y: 2, rot: 1, fixed: true };
+  const exit = { type: 'exit' as const, x: 4, y: 2, rot: 1, fixed: true };
+  const base = { cols: 5, rows: 3, pieces: [car, engine, exit] };
+
+  it('any track that reaches the engine works, not just the planned one', () => {
+    const planned = { ...base, gaps: [{ x: 1, y: 0, type: 'straight' as const, rot: 0 }, { x: 2, y: 0, type: 'curve' as const, rot: 2 }, { x: 2, y: 1, type: 'straight' as const, rot: 1 }, { x: 2, y: 2, type: 'curve' as const, rot: 0 }] };
+    const other = { ...base, gaps: [{ x: 1, y: 0, type: 'curve' as const, rot: 2 }, { x: 1, y: 1, type: 'straight' as const, rot: 1 }, { x: 1, y: 2, type: 'curve' as const, rot: 0 }, { x: 2, y: 2, type: 'straight' as const, rot: 0 }] };
+    expect(runLevel(planned)).toBe('complete');
+    expect(runLevel(other)).toBe('complete');
+  });
+
+  it('a dropped piece turns by itself only when just one way fits', () => {
+    const grid = new Map<string, Piece>([[key(0, 0), car], [key(3, 2), engine]]);
+    expect(fitRotation(grid, 1, 0, 'straight')).toBe(null); // only one end meets track: the child turns it
+    grid.set(key(2, 0), { type: 'straight', x: 2, y: 0, rot: 0, fixed: false });
+    expect(fitRotation(grid, 1, 0, 'straight')).toBe(0); // between the carriage and a straight: E-W
+    grid.set(key(2, 1), { type: 'straight', x: 2, y: 1, rot: 1, fixed: false });
+    expect(fitRotation(grid, 2, 2, 'curve')).toBe(0); // from the line above round to the engine
+    expect(fitRotation(new Map(), 1, 1, 'curve')).toBe(null); // open field: tap to turn
   });
 });

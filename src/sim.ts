@@ -1,5 +1,5 @@
 // The carriages' run, without any drawing: used by the game and by the tests.
-import { DX, DY, Trail, cellPath, opp, traverse, type Dir, type Piece } from './track';
+import { DX, DY, Trail, cellPath, opp, sides, traverse, type Dir, type Piece } from './track';
 import type { Level } from './levels';
 
 export const REF = 200; // texture resolution: pixels per grid cell
@@ -180,4 +180,20 @@ export function runLevel(L: Level, setSwitches: (sw: Piece[]) => void = () => {}
     if (sim.coupled.length === movers.length) return 'complete';
   }
   return 'timeout';
+}
+
+/**
+ * Which way a piece dropped on (x, y) has to face: if exactly one rotation joins both its ends to the track around it,
+ * that one; otherwise null, and the child turns it by tapping.
+ */
+export function fitRotation(grid: Map<string, Piece>, x: number, y: number, type: 'straight' | 'curve'): number | null {
+  const opens = (d: Dir) => {
+    const q = grid.get(key(x + DX[d], y + DY[d]));
+    if (!q) return false;
+    const back = opp(d);
+    return q.type === 'engine' ? back === opp(q.rot) : sides(q).includes(back);
+  };
+  const fits: number[] = [];
+  for (let r = 0; r < (type === 'straight' ? 2 : 4); r++) if (sides({ type, x, y, rot: r, fixed: false }).every(opens)) fits.push(r);
+  return fits.length === 1 ? fits[0] : null;
 }

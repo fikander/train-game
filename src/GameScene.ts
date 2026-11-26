@@ -5,7 +5,7 @@ import { REF, VEH, dirAngle, drawPiece, drawSwitchMarker, makeTextures } from '.
 import { sfx, isMuted, setMuted } from './audio';
 import { markSolved, nextLevel } from './progress';
 import { drawForest, drawMeadow, drawPond, regions, type Cell } from './terrain';
-import { CAR_L, ENG_L, SCALE, SPEED, TrainSim, junctionKeys, key, makeMover, type SimMover } from './sim';
+import { CAR_L, ENG_L, SCALE, SPEED, TrainSim, fitRotation, junctionKeys, key, makeMover, type SimMover } from './sim';
 import { solvedLevels } from './progress';
 
 export const W = 1920, H = 1200;
@@ -96,6 +96,7 @@ export class GameScene extends Phaser.Scene {
   private engine!: Vehicle;
   private enginePiece!: Piece;
   private movers: Mover[] = [];
+  private blocked = new Set<string>(); // board squares with forest or water: pieces can't go there
   private sim!: TrainSim<Mover>;
   private coupled: Mover[] = []; // in order of arrival: 1, 2, 3
   private mode: Mode = 'edit';
@@ -113,7 +114,7 @@ export class GameScene extends Phaser.Scene {
     this.li = Math.min(LEVELS.length - 1, Math.max(0, data.level ?? nextLevel()));
     this.L = LEVELS[this.li];
     this.grid = new Map(); this.gaps = new Map(); this.pieceGfx = new Map(); this.markers = new Map();
-    this.tokens = []; this.movers = []; this.coupled = []; this.depart = null;
+    this.tokens = []; this.movers = []; this.blocked = new Set(); this.coupled = []; this.depart = null;
     this.mode = 'edit'; this.idle = 0; this.goPulse = undefined; this.leaving = false; this.celebrateOnce = false;
   }
 
@@ -121,7 +122,7 @@ export class GameScene extends Phaser.Scene {
     makeTextures(this);
     saveLevel(this.li);
     const L = this.L;
-    this.cell = Math.floor(Math.min(1800 / L.cols, (BOARD_BOTTOM - BOARD_TOP) / L.rows, 230));
+    this.cell = Math.floor(Math.min(1580 / L.cols, (BOARD_BOTTOM - BOARD_TOP) / L.rows, 230));
     this.ox = Math.round((W - L.cols * this.cell) / 2);
     this.oy = Math.round(BOARD_TOP + (BOARD_BOTTOM - BOARD_TOP - L.rows * this.cell) / 2);
 
@@ -228,7 +229,7 @@ export class GameScene extends Phaser.Scene {
     // big open areas get a mix: one pond, some plain grass, and forest in the rest
     for (const r of regions(empty)) {
       if (r.length === 1) {
-        if (rnd.frac() < 0.6) drawMeadow(g, centre(r[0]), s, rnd); else drawForest(g, [centre(r[0])], s * 0.75, rnd);
+        if (rnd.frac() < 0.6) drawMeadow(g, centre(r[0]), s, rnd); else { drawForest(g, [centre(r[0])], s * 0.75, rnd); this.blocked.add(key(r[0].x, r[0].y)); }
         continue;
       }
       let rest = r;
@@ -241,11 +242,15 @@ export class GameScene extends Phaser.Scene {
           pond.push(next);
         }
         drawPond(g, pond.map(centre), s, rnd);
+        for (const c of pond) this.blocked.add(key(c.x, c.y));
         rest = r.filter(c => !pond.includes(c));
       }
-      const grass = rest.filter(() => rnd.frac() < 0.3);
+      // plenty of open grass, so there is room to try other ways
+      const grass = rest.filter(() => rnd.frac() < 0.45);
       for (const c of grass) drawMeadow(g, centre(c), s, rnd);
-      for (const f of regions(rest.filter(c => !grass.includes(c)))) drawForest(g, f.map(centre), s * 0.9, rnd);
+      const trees = rest.filter(c => !grass.includes(c));
+      for (const c of trees) this.blocked.add(key(c.x, c.y));
+      for (const f of regions(trees)) drawForest(g, f.map(centre), s * 0.9, rnd);
     }
     // around the board: a few forests in the margins, kept clear of buttons, tray and the line out
     const exitRows = this.L.pieces.filter(p => p.type === 'exit').map(p => this.py(p.y + 0.5));
@@ -452,29 +457,28 @@ export class GameScene extends Phaser.Scene {
 
   private canEdit() { return this.mode === 'edit'; }
 
-  private nearestGap(x: number, y: number, t: Token): Gap | null {
-    let best: Gap | null = null, bestD = this.cell * 0.85;
-    for (const g of this.gaps.values()) {
-      const k = key(g.x, g.y);
-      if (this.grid.has(k) && t.cell !== k) continue;
-      const d = Math.hypot(this.px(g.x + 0.5) - x, this.py(g.y + 0.5) - y);
-      if (d < bestD) { bestD = d; best = g; }
-    }
-    return best;
+  /** The board square under the pointer, if a piece may go there (open grass or a gap, not already taken). */
+  private dropSquare(px: number, py: number, t: Token): { x: number; y: number; ok: boolean } | null {
+    const x = Math.floor((px - this.ox) / this.cell), y = Math.floor((py - this.oy) / this.cell);
+    if (x < 0 || y < 0 || x >= this.L.cols || y >= this.L.rows) return null;
+    const k = key(x, y);
+    const ok = !this.blocked.has(k) && (!this.grid.has(k) || t.cell === k);
+    return { x, y, ok };
   }
 
   private dropToken(t: Token, px: number, py: number) {
     const c = t.c;
-    const gap = this.nearestGap(px, py, t);
+    const sq = this.dropSquare(px, py, t);
     if (t.cell) { this.grid.delete(t.cell); t.cell = null; }
-    if (gap && gap.type === t.type) {
-      const k = key(gap.x, gap.y);
+    if (sq?.ok) {
+      const k = key(sq.x, sq.y);
       t.cell = k;
-      t.rot = gap.rot; // forgiving: it always lands the right way round
-      this.grid.set(k, { type: t.type, x: gap.x, y: gap.y, rot: t.rot, fixed: false });
+      // if only one way round joins up with the track next to it, it lands that way; otherwise the child taps to turn it
+      t.rot = fitRotation(this.grid, sq.x, sq.y, t.type) ?? t.rot;
+      this.grid.set(k, { type: t.type, x: sq.x, y: sq.y, rot: t.rot, fixed: false });
       drawPiece(t.g, { type: t.type, x: 0, y: 0, rot: t.rot, fixed: false }, TOKEN);
       c.setDepth(10);
-      const tx = this.px(gap.x + 0.5), ty = this.py(gap.y + 0.5);
+      const tx = this.px(sq.x + 0.5), ty = this.py(sq.y + 0.5);
       this.tweens.add({
         targets: c, x: tx, y: ty, scale: this.cell / TOKEN, duration: 140, ease: 'Back.Out',
         onComplete: () => {
@@ -486,10 +490,10 @@ export class GameScene extends Phaser.Scene {
       });
       return;
     }
-    if (gap && gap.type !== t.type) {
-      // wrong shape: wobble over the square, then slide home
+    if (sq && this.blocked.has(key(sq.x, sq.y))) {
+      // trees or water: wobble over the square, then slide home
       sfx.wobble();
-      const tx = this.px(gap.x + 0.5), ty = this.py(gap.y + 0.5);
+      const tx = this.px(sq.x + 0.5), ty = this.py(sq.y + 0.5);
       this.tweens.chain({
         targets: c, tweens: [
           { x: tx, y: ty, duration: 120 },
@@ -538,16 +542,8 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: m, scale: { from: 1.25, to: 1 }, duration: 220, ease: 'Back.Out' });
   }
 
-  private allCorrect() {
-    for (const g of this.gaps.values()) {
-      const p = this.grid.get(key(g.x, g.y));
-      if (!p || p.type !== g.type || !sameSides(p, g)) return false;
-    }
-    return true;
-  }
-
   private checkComplete() {
-    const ok = this.allCorrect() && this.mode === 'edit';
+    const ok = this.tokens.every(t => t.cell) && this.mode === 'edit';
     if (ok && !this.goPulse) {
       this.goPulse = this.tweens.add({ targets: this.goBtn, scale: 1.12, duration: 420, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
     } else if (!ok && this.goPulse) {
