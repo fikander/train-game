@@ -6,7 +6,7 @@ export const opp = (d: number): Dir => ((d + 2) % 4) as Dir;
 
 export type CarKind = 'coal' | 'passenger' | 'tank';
 
-export type PieceType = 'straight' | 'curve' | 'switch' | 'start' | 'car' | 'exit' | 'end';
+export type PieceType = 'straight' | 'curve' | 'switch' | 'start' | 'car' | 'engine' | 'exit' | 'end';
 
 export interface Piece {
   type: PieceType;
@@ -20,16 +20,20 @@ export interface Piece {
   out1?: Dir;
   out2?: Dir;
   state?: 0 | 1;
-  // car only
+  // car only: which carriage waits here (rot = the way it drives off)
   car?: CarKind;
+  num?: number;
+  buffer?: boolean; // draw a buffer stop behind it
 }
 
 /** Sides of a piece that connect to neighbours (used for auto-rotate and drawing). */
 export function sides(p: Piece): Dir[] {
   switch (p.type) {
     case 'straight':
-    case 'car':
       return p.rot % 2 === 0 ? [1, 3] : [0, 2];
+    case 'engine':
+    case 'car':
+      return [p.rot as Dir, opp(p.rot)];
     case 'curve':
       return [p.rot % 4, (p.rot + 1) % 4] as Dir[];
     case 'switch':
@@ -46,8 +50,11 @@ export function sides(p: Piece): Dir[] {
 /** Given a piece entered from side `entry`, which side does the train leave by? null = can't enter. */
 export function traverse(p: Piece, entry: Dir): Dir | null {
   switch (p.type) {
+    case 'car': // a carriage's starting square: plain straight track
+      return entry === p.rot ? opp(p.rot) : entry === opp(p.rot) ? (p.rot as Dir) : null;
+    case 'engine':
+      return null;
     case 'straight':
-    case 'car':
     case 'curve': {
       const s = sides(p);
       if (s[0] === entry) return s[1];

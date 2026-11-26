@@ -1,16 +1,17 @@
 import Phaser from 'phaser';
 import { LEVELS, type Gap, type Level } from './levels';
 import { DX, DY, Trail, cellPath, opp, sides, traverse, type Dir, type Piece } from './track';
-import { REF, dirAngle, drawPiece, drawSwitchMarker, drawTunnel, makeTextures } from './art';
-import { lines, say, sfx, isMuted, setMuted } from './audio';
+import { REF, VEH, dirAngle, drawPiece, drawSwitchMarker, drawTunnel, makeTextures } from './art';
+import { sfx, isMuted, setMuted } from './audio';
 
 export const W = 1920, H = 1200;
 const BOARD_TOP = 60, BOARD_BOTTOM = 950, TRAY_Y = 1080, TOKEN = 170;
-const VIRTUAL = 3; // length of invisible track behind the start, so coupled carriages always have room
-const ENG_BACK = 0.42, FIRST_GAP = 0.93, CAR_GAP = 0.87;
+const BACK = 2; // invisible track behind each carriage's start
+const SCALE = 0.9; // vehicle size relative to a cell
+const ENG_L = VEH.engine.w / REF * SCALE + 0.02, CAR_L = VEH.car.w / REF * SCALE + 0.03;
 const SPEED = 1.7, REV_SPEED = 2.6;
 
-type Mode = 'edit' | 'run' | 'pause' | 'reverse' | 'exiting' | 'done';
+type Mode = 'edit' | 'run' | 'pause' | 'rewind' | 'depart' | 'done';
 
 interface Token {
   type: 'straight' | 'curve';
@@ -22,7 +23,65 @@ interface Token {
   dragged: boolean;
 }
 
-interface Checkpoint { d: number; x: number; y: number; dir: Dir }
+interface Mover {
+  v: Vehicle;
+  num: number;
+  trail: Trail;
+  d: number; // distance of the carriage's FRONT along its trail
+  d0: number;
+  len0: number;
+  start: { x: number; y: number; dir: Dir };
+  pending: { x: number; y: number; dir: Dir };
+  state: 'idle' | 'move' | 'stop' | 'coupled' | 'rewind';
+  speed: number;
+}
+
+/** A train vehicle seen from above: shadow + base (sides) on the ground, top lifted up the screen. */
+class Vehicle {
+  shadow: Phaser.GameObjects.Image;
+  base: Phaser.GameObjects.Image;
+  top: Phaser.GameObjects.Image;
+  chimney?: Phaser.GameObjects.Image;
+  label?: Phaser.GameObjects.Text;
+  x = 0; y = 0; angle = 0;
+  private lift: number;
+  private k: number;
+  constructor(scene: Phaser.Scene, kind: string, cell: number) {
+    this.k = cell / REF * SCALE;
+    const isEngine = kind === 'engine';
+    this.lift = (isEngine ? VEH.engine.lift : VEH.car.lift) * cell;
+    this.shadow = scene.add.image(0, 0, `${kind}-base`).setScale(this.k * 1.02).setTint(0x1d3d14).setAlpha(0.28).setDepth(16);
+    this.base = scene.add.image(0, 0, `${kind}-base`).setScale(this.k).setDepth(18);
+    this.top = scene.add.image(0, 0, `${kind}-top`).setScale(this.k).setDepth(19);
+    if (isEngine) this.chimney = scene.add.image(0, 0, 'engine-chimney').setScale(this.k).setDepth(21);
+  }
+  setNumber(scene: Phaser.Scene, n: number) {
+    const fs = Math.round(70 * this.k);
+    this.label = scene.add.text(0, 0, String(n), {
+      fontFamily: 'Arial Black, Arial Rounded MT Bold, Arial, sans-serif', fontSize: `${fs}px`, color: '#ffffff', fontStyle: 'bold',
+      stroke: '#2d2a3e', strokeThickness: Math.round(fs * 0.22),
+    }).setOrigin(0.5).setDepth(22);
+  }
+  get parts(): Phaser.GameObjects.Components.Visible[] { return [this.shadow, this.base, this.top, ...(this.chimney ? [this.chimney] : []), ...(this.label ? [this.label] : [])]; }
+  setPose(x: number, y: number, angle: number, bob = 0) {
+    this.x = x; this.y = y; this.angle = angle;
+    this.shadow.setPosition(x + this.lift * 0.5, y + this.lift * 0.6).setRotation(angle);
+    this.base.setPosition(x, y).setRotation(angle);
+    this.top.setPosition(x, y - this.lift + bob).setRotation(angle);
+    if (this.chimney) {
+      const cx = 38 * this.k;
+      this.chimney.setPosition(x + Math.cos(angle) * cx, y + Math.sin(angle) * cx - this.lift * 1.9 + bob).setRotation(angle);
+    }
+    this.label?.setPosition(x, y - this.lift * 1.6 + bob);
+  }
+  /** where smoke comes out */
+  get smokePoint() { return this.chimney ? { x: this.chimney.x, y: this.chimney.y - 6 } : { x: this.x, y: this.y }; }
+  setVisible(v: boolean) { this.parts.forEach(p => p.setVisible(v)); }
+  get visible() { return this.base.visible; }
+  squash(scene: Phaser.Scene) {
+    scene.tweens.add({ targets: [this.base, this.top], scaleX: this.k * 1.08, scaleY: this.k * 0.92, duration: 90, yoyo: true });
+  }
+}
 
 const key = (x: number, y: number) => `${x},${y}`;
 
@@ -31,7 +90,6 @@ export function savedLevel(): number {
 }
 function saveLevel(i: number) { try { localStorage.setItem('choo.level', String(i)); } catch { /* ignore */ } }
 
-let firstLevelThisSession = true;
 
 export class GameScene extends Phaser.Scene {
   private li = 0;
@@ -43,19 +101,13 @@ export class GameScene extends Phaser.Scene {
   private gaps = new Map<string, Gap>();
   private pieceGfx = new Map<string, Phaser.GameObjects.Graphics>();
   private markers = new Map<string, Phaser.GameObjects.Graphics>();
-  private slotGfx = new Map<string, Phaser.GameObjects.Graphics[]>();
-  private waitingCars = new Map<string, Phaser.GameObjects.Image>();
   private tokens: Token[] = [];
-  private engine!: Phaser.GameObjects.Image;
-  private cars: Phaser.GameObjects.Image[] = [];
-  private trail = new Trail();
-  private headD = 0;
-  private speed = 0;
+  private engine!: Vehicle;
+  private enginePiece!: Piece;
+  private movers: Mover[] = [];
+  private coupled: Mover[] = []; // in order of arrival: 1, 2, 3
   private mode: Mode = 'edit';
-  private pending!: { x: number; y: number; dir: Dir };
-  private checkpoints: Checkpoint[] = [];
-  private revTarget: Checkpoint | null = null;
-  private exitD = 0;
+  private depart: { trail: Trail; d: number; exitD: number; speed: number } | null = null;
   private smoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   private puffTimer = 0;
   private puffCount = 0;
@@ -63,16 +115,15 @@ export class GameScene extends Phaser.Scene {
   private hand!: Phaser.GameObjects.Text;
   private goBtn!: Phaser.GameObjects.Container;
   private goPulse?: Phaser.Tweens.Tween;
-  private flip = new WeakMap<Phaser.GameObjects.Image, boolean>();
 
   constructor() { super('game'); }
 
   init(data: { level?: number }) {
     this.li = Math.min(LEVELS.length - 1, Math.max(0, data.level ?? savedLevel()));
     this.L = LEVELS[this.li];
-    this.grid = new Map(); this.gaps = new Map(); this.pieceGfx = new Map(); this.markers = new Map(); this.slotGfx = new Map();
-    this.waitingCars = new Map(); this.tokens = []; this.cars = []; this.trail = new Trail();
-    this.checkpoints = []; this.revTarget = null; this.mode = 'edit'; this.speed = 0; this.idle = 0; this.goPulse = undefined;
+    this.grid = new Map(); this.gaps = new Map(); this.pieceGfx = new Map(); this.markers = new Map();
+    this.tokens = []; this.movers = []; this.coupled = []; this.depart = null;
+    this.mode = 'edit'; this.idle = 0; this.goPulse = undefined;
   }
 
   create() {
@@ -85,8 +136,8 @@ export class GameScene extends Phaser.Scene {
 
     this.drawBackground();
     for (const p of L.pieces) this.grid.set(key(p.x, p.y), { ...p });
+    for (const p of this.grid.values()) if (p.type === 'car') p.buffer = !this.grid.has(key(p.x - DX[p.rot], p.y - DY[p.rot]));
     for (const g of L.gaps) this.gaps.set(key(g.x, g.y), g);
-    this.drawGapSlots();
     this.drawScenery();
     for (const p of this.grid.values()) this.addPieceView(p);
     this.drawTray();
@@ -94,14 +145,10 @@ export class GameScene extends Phaser.Scene {
     this.drawProgress();
     this.drawParentCorner();
 
-    // train
-    const start = [...this.grid.values()].find(p => p.type === 'start')!;
-    const d = start.rot as Dir;
-    const cx = start.x + 0.5, cy = start.y + 0.5;
-    this.trail.add([{ x: cx - DX[d] * VIRTUAL, y: cy - DY[d] * VIRTUAL }, { x: cx, y: cy }, { x: cx + DX[d] * 0.5, y: cy + DY[d] * 0.5 }]);
-    this.pending = { x: start.x + DX[d], y: start.y + DY[d], dir: d };
-    this.headD = VIRTUAL + ENG_BACK;
-    this.engine = this.add.image(0, 0, 'engine').setScale(this.cell / REF * 0.9).setDepth(20);
+    // the engine waits at the end of the line
+    this.enginePiece = [...this.grid.values()].find(p => p.type === 'engine')!;
+    this.engine = new Vehicle(this, 'engine', this.cell);
+    this.engine.setPose(this.px(this.enginePiece.x + 0.5), this.py(this.enginePiece.y + 0.5), dirAngle(this.enginePiece.rot));
 
     this.smoke = this.add.particles(0, 0, 'puff', {
       lifespan: 1500,
@@ -123,15 +170,15 @@ export class GameScene extends Phaser.Scene {
     this.hand = this.add.text(0, 0, '👆', { fontSize: '120px' }).setOrigin(0.35, 0.05).setDepth(100).setVisible(false);
 
     this.setupInput();
-    this.placeTrain(0);
+
 
     this.cameras.main.fadeIn(400, 124, 200, 90);
     this.time.delayedCall(500, () => {
       sfx.whistle();
-      this.time.delayedCall(900, () => say(firstLevelThisSession ? lines.hello() : Phaser.Utils.Array.GetRandom(['Choo choo!', lines.hello()])));
-      firstLevelThisSession = false;
-      for (const s of this.waitingCars.values()) {
-        this.tweens.add({ targets: s, angle: { from: s.angle - 6, to: s.angle + 6 }, duration: 160, yoyo: true, repeat: 3, onComplete: () => this.snapCarAngle(s) });
+      for (const m of this.movers) {
+        const v = m.v;
+        const { x, y, angle } = v;
+        this.tweens.addCounter({ from: 0, to: 1, duration: 900, onUpdate: tw => v.setPose(x, y, angle + Math.sin((tw.getValue() ?? 0) * Math.PI * 6) * 0.1), onComplete: () => v.setPose(x, y, angle) });
       }
     });
     (window as any).__scene = this;
@@ -143,15 +190,19 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- drawing ----------
   private drawBackground() {
-    const g = this.add.graphics();
-    g.fillStyle(0x7cc85a).fillRect(0, 0, W, H);
-    // board
+    // drawn once into a texture: thousands of shapes would be far too slow to redraw every frame
+    const g = this.make.graphics({}, false);
     const { cols, rows } = this.L, s = this.cell;
-    g.fillStyle(0x000000, 0.12).fillRoundedRect(this.ox - 14, this.oy - 6, cols * s + 28, rows * s + 28, 28);
-    g.fillStyle(0x9bd86f).fillRoundedRect(this.ox - 14, this.oy - 14, cols * s + 28, rows * s + 28, 28);
-    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-      g.fillStyle((x + y) % 2 ? 0x8fd064 : 0x98d66c).fillRoundedRect(this.ox + x * s + 3, this.oy + y * s + 3, s - 6, s - 6, 14);
-    }
+    const rnd0 = new Phaser.Math.RandomDataGenerator([`ground${this.li}`]);
+    // textured grass: soft mottled patches + speckles
+    g.fillStyle(0x7cc85a).fillRect(0, 0, W, H);
+    for (let i = 0; i < 70; i++) g.fillStyle(rnd0.pick([0x86d063, 0x72bd50, 0x8ad668]), 0.75).fillCircle(rnd0.between(0, W), rnd0.between(0, H), rnd0.between(40, 120));
+    for (let i = 0; i < 900; i++) g.fillStyle(rnd0.pick([0x4f8f36, 0x9ee07a]), 0.55).fillCircle(rnd0.between(0, W), rnd0.between(0, H), rnd0.between(1, 3));
+    // the play area: slightly lighter, with thin hand-drawn grid lines
+    g.fillStyle(0xa6dd7c, 0.45).fillRoundedRect(this.ox - 10, this.oy - 10, cols * s + 20, rows * s + 20, 24);
+    g.lineStyle(3, 0x3f7a2c, 0.35);
+    for (let x = 0; x <= cols; x++) g.lineBetween(this.ox + x * s + rnd0.between(-2, 2), this.oy - 16, this.ox + x * s + rnd0.between(-2, 2), this.oy + rows * s + 16);
+    for (let y = 0; y <= rows; y++) g.lineBetween(this.ox - 16, this.oy + y * s + rnd0.between(-2, 2), this.ox + cols * s + 16, this.oy + y * s + rnd0.between(-2, 2));
     // tray shelf (only when there are pieces to place)
     if (this.L.gaps.length + (this.L.spare?.length ?? 0) > 0) g.fillStyle(0x000000, 0.12)
       .fillRoundedRect(40, 972, 1560, 216, 36)
@@ -162,38 +213,30 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < 26; i++) {
       const x = rnd.between(10, W - 10), y = rnd.between(10, 950);
       if (x > this.ox - 30 && x < this.ox + cols * s + 30 && y > this.oy - 30 && y < this.oy + rows * s + 30) continue;
-      g.fillStyle(0x5fae45).fillTriangle(x - 12, y, x - 4, y - 22, x + 2, y).fillTriangle(x - 2, y, x + 6, y - 28, x + 12, y);
+      g.fillStyle(0x4f8f36).fillTriangle(x - 12, y, x - 4, y - 22, x + 2, y).fillTriangle(x - 2, y, x + 6, y - 28, x + 12, y);
     }
-  }
-
-  private drawGapSlots() {
-    const s = this.cell;
-    for (const gp of this.gaps.values()) {
-      const g = this.add.graphics().setDepth(1);
-      const x = this.px(gp.x), y = this.py(gp.y);
-      g.lineStyle(6, 0xffffff, 0.85);
-      const inset = 14, len = 22;
-      // dashed rounded outline
-      const x0 = x + inset, y0 = y + inset, x1 = x + s - inset, y1 = y + s - inset;
-      for (let t = x0 + 10; t < x1 - 10; t += len * 1.8) { g.lineBetween(t, y0, Math.min(t + len, x1 - 10), y0); g.lineBetween(t, y1, Math.min(t + len, x1 - 10), y1); }
-      for (let t = y0 + 10; t < y1 - 10; t += len * 1.8) { g.lineBetween(x0, t, x0, Math.min(t + len, y1 - 10)); g.lineBetween(x1, t, x1, Math.min(t + len, y1 - 10)); }
-      // faint picture of the needed piece so it's guessable without reading
-      const hint = this.add.graphics().setDepth(1).setPosition(x + s / 2, y + s / 2).setAlpha(0.18);
-      drawPiece(hint, { type: gp.type, x: 0, y: 0, rot: gp.rot, fixed: false }, s);
-      this.tweens.add({ targets: g, alpha: { from: 1, to: 0.45 }, duration: 900, yoyo: true, repeat: -1 });
-      this.slotGfx.set(key(gp.x, gp.y), [g, hint]);
+    const bgKey = `bg${this.li}`;
+    if (this.textures.exists(bgKey)) this.textures.remove(bgKey);
+    g.generateTexture(bgKey, W, H);
+    g.destroy();
+    this.add.image(0, 0, bgKey).setOrigin(0).setDepth(0);
+    // trees around the edge of the play area
+    for (let i = 0; i < 40; i++) {
+      const x = rnd.between(0, W), y = rnd.between(0, 960);
+      if (x > this.ox - 90 && x < this.ox + cols * s + 90 && y > this.oy - 90 && y < this.oy + rows * s + 90) continue;
+      if (y < 70 && x > W / 2 - 260 && x < W / 2 + 260) continue;
+      this.add.image(x, y, rnd.pick(['tree', 'pine', 'pine', 'bush', 'rock'])).setScale(rnd.realInRange(0.7, 1.05)).setDepth(4);
     }
   }
 
   private drawScenery() {
     const rnd = new Phaser.Math.RandomDataGenerator([`scenery${this.li}`]);
     const kinds: [string, () => void][] = [
-      ['tree', sfx.tweet], ['bush', sfx.boop], ['flowers', sfx.pop], ['pond', sfx.quack], ['cow', sfx.moo], ['tree', sfx.tweet], ['flowers', sfx.pop],
+      ['tree', sfx.tweet], ['pine', sfx.tweet], ['bush', sfx.boop], ['flowers', sfx.pop], ['pond', sfx.quack], ['cow', sfx.moo], ['rock', sfx.boop], ['flowers', sfx.pop],
     ];
     for (let y = 0; y < this.L.rows; y++) for (let x = 0; x < this.L.cols; x++) {
       const k = key(x, y);
       if (this.grid.has(k) || this.gaps.has(k)) continue;
-      if (rnd.frac() < 0.25) continue;
       const [tex, snd] = rnd.pick(kinds);
       const img = this.add.image(this.px(x + 0.5), this.py(y + 0.5), tex).setScale(this.cell / REF * 0.85).setDepth(5);
       img.setInteractive();
@@ -217,14 +260,16 @@ export class GameScene extends Phaser.Scene {
       zone.on('pointerdown', () => this.flipSwitch(p));
     }
     if (p.type === 'car' && p.car) {
-      const img = this.add.image(g.x, g.y, `car-${p.car}`).setScale(this.cell / REF * 0.9).setDepth(15);
-      img.setRotation(p.rot % 2 ? Math.PI / 2 : 0);
-      this.waitingCars.set(k, img);
+      const v = new Vehicle(this, p.car, this.cell);
+      v.setNumber(this, p.num ?? 1);
+      const d = p.rot as Dir, cx = p.x + 0.5, cy = p.y + 0.5;
+      const trail = new Trail();
+      trail.add([{ x: cx - DX[d] * BACK, y: cy - DY[d] * BACK }, { x: cx, y: cy }, { x: cx + DX[d] * 0.5, y: cy + DY[d] * 0.5 }]);
+      const start = { x: p.x + DX[d], y: p.y + DY[d], dir: d };
+      const m: Mover = { v, num: p.num ?? 1, trail, d: BACK + CAR_L / 2, d0: BACK + CAR_L / 2, len0: trail.length, start, pending: { ...start }, state: 'idle', speed: 0 };
+      this.movers.push(m);
+      this.placeMover(m);
     }
-  }
-
-  private snapCarAngle(s: Phaser.GameObjects.Image) {
-    for (const [k, img] of this.waitingCars) if (img === s) { const p = this.grid.get(k)!; s.setRotation(p.rot % 2 ? Math.PI / 2 : 0); }
   }
 
   private drawTray() {
@@ -460,7 +505,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private checkComplete() {
-    for (const [k, gs] of this.slotGfx) gs.forEach(g => g.setVisible(!this.grid.has(k)));
     const ok = this.allCorrect() && this.mode === 'edit';
     if (ok && !this.goPulse) {
       this.goPulse = this.tweens.add({ targets: this.goBtn, scale: 1.12, duration: 420, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
@@ -510,117 +554,114 @@ export class GameScene extends Phaser.Scene {
     sfx.whistle();
     if (this.mode !== 'edit') return;
     if (this.goPulse) { this.goPulse.stop(); this.goPulse = undefined; this.goBtn.setScale(1); }
-    say(lines.go());
     this.mode = 'run';
-    this.speed = 0;
+    for (const m of this.movers) { m.state = 'move'; m.speed = 0; }
   }
 
-  private decide() {
-    const { x, y, dir } = this.pending;
-    this.checkpoints.push({ d: this.trail.length, x, y, dir });
+  /** The carriage's front reached the end of its known track: look at the next square. */
+  private advance(m: Mover) {
+    const { x, y, dir } = m.pending;
     const p = this.grid.get(key(x, y));
     const entry = opp(dir);
     const out = p ? traverse(p, entry) : null;
-    if (!p || out === null) { this.deadEnd(false); return; }
-    if (p.type === 'exit') {
-      if (this.waitingCars.size > 0) { this.deadEnd(true); return; }
-      const cx = x + 0.5, cy = y + 0.5;
-      this.trail.add([{ x: cx, y: cy }, { x: cx + DX[out] * 6, y: cy + DY[out] * 6 }]);
-      this.exitD = this.checkpoints[this.checkpoints.length - 1].d + 0.5;
-      this.mode = 'exiting';
-      return;
+    if (!p || out === null) { m.state = 'stop'; m.speed = 0; return; }
+    m.trail.add(cellPath(x, y, entry, out));
+    m.pending = { x: x + DX[out], y: y + DY[out], dir: out };
+  }
+
+  private frontOf(m: Mover) { return m.trail.at(m.d); }
+  private centreOf(m: Mover) { return m.trail.at(m.d - CAR_L / 2); }
+
+  /** Where the next carriage has to couple: the back of the engine, or the back of the last coupled carriage. */
+  private tailPoint() {
+    if (!this.coupled.length) {
+      const e = this.enginePiece, a = dirAngle(e.rot);
+      return { x: e.x + 0.5 - Math.cos(a) * ENG_L / 2, y: e.y + 0.5 - Math.sin(a) * ENG_L / 2 };
     }
-    this.trail.add(cellPath(x, y, entry, out));
-    this.pending = { x: x + DX[out], y: y + DY[out], dir: out };
-    if (p.type === 'car' && this.waitingCars.has(key(x, y))) this.pickup(key(x, y));
+    const last = this.coupled[this.coupled.length - 1];
+    return last.trail.at(last.d - CAR_L);
   }
 
-  private pickup(k: string) {
+  private bump(a: Mover, b: Mover | null) {
+    (window as any).__bump = { a: a.num, b: b?.num ?? 'engine/order', fa: this.frontOf(a), tail: this.tailPoint(), cb: b ? this.centreOf(b) : null, ca: this.centreOf(a) };
     this.mode = 'pause';
-    const img = this.waitingCars.get(k)!;
-    this.waitingCars.delete(k);
-    const n = this.cars.length;
-    const td = Math.max(0, this.headD - ENG_BACK - FIRST_GAP - n * CAR_GAP);
-    const to = this.trail.at(td);
-    const fx = img.x, fy = img.y, tx = this.px(to.x), ty = this.py(to.y);
-    const r0 = img.rotation;
-    let r1 = to.angle;
-    const flipped = Math.cos(r1) < -0.2;
-    while (r1 - r0 > Math.PI) r1 -= Math.PI * 2;
-    while (r1 - r0 < -Math.PI) r1 += Math.PI * 2;
-    const base = img.scale;
-    img.setDepth(25);
-    this.tweens.addCounter({
-      from: 0, to: 1, duration: 650, ease: 'Sine.InOut',
-      onUpdate: tw => {
-        const f = tw.getValue() ?? 0;
-        img.setPosition(fx + (tx - fx) * f, fy + (ty - fy) * f - Math.sin(Math.PI * f) * this.cell * 0.7);
-        img.setRotation(r0 + (r1 - r0) * f);
-        img.setScale(base * (1 + Math.sin(Math.PI * f) * 0.25));
-      },
-      onComplete: () => {
-        img.setScale(base).setDepth(19 - n);
-        img.setFlipY(flipped);
-        this.flip.set(img, flipped);
-        this.cars.push(img);
-        sfx.clunk();
-        this.starBurst((tx + this.engine.x) / 2, (ty + this.engine.y) / 2);
-        say(lines.pickup());
-        const es = this.engine.scaleX;
-        this.tweens.add({ targets: this.engine, scaleX: es * 1.1, scaleY: es * 0.9, duration: 90, yoyo: true });
-        this.time.delayedCall(450, () => { if (this.mode === 'pause') { this.mode = 'run'; this.speed = 0.4; } });
-      },
-    });
+    for (const m of this.movers) if (m.state === 'move') { m.state = 'stop'; m.speed = 0; }
+    sfx.boing();
+    const pa = this.frontOf(a);
+    const pb = b ? this.centreOf(b) : this.tailPoint();
+    const x = this.px((pa.x + pb.x) / 2), y = this.py((pa.y + pb.y) / 2);
+    this.starBurst(x, y);
+    this.sparkle(x, y);
+    a.v.squash(this); b?.v.squash(this);
+    if (!b) this.engine.squash(this);
+    this.time.delayedCall(1300, () => this.startRewind());
   }
 
-  private deadEnd(missing: boolean) {
-    this.mode = 'pause';
-    this.speed = 0;
-    this.checkpoints.pop();
+  private startRewind() {
+    this.mode = 'rewind';
     sfx.oops();
-    say(missing ? lines.missing() : lines.deadEnd());
-    const ex = this.engine.x;
-    this.tweens.add({ targets: this.engine, x: ex + 6, duration: 50, yoyo: true, repeat: 5, onComplete: () => this.engine.setX(ex) });
-    this.time.delayedCall(1400, () => {
-      // reverse to the last switch we went through (so the child can flip it), or home
-      let target: Checkpoint | null = null;
-      for (let i = this.checkpoints.length - 1; i >= 0; i--) {
-        const cp = this.checkpoints[i];
-        const sp = this.grid.get(key(cp.x, cp.y));
-        if (sp?.type === 'switch' && opp(cp.dir) === sp.inDir && cp.d < this.headD - 0.01) { target = cp; break; }
-      }
-      if (!target) target = this.checkpoints[0] ?? null;
-      if (!target) { this.mode = 'edit'; this.checkComplete(); return; }
-      this.revTarget = target;
-      this.mode = 'reverse';
-      this.speed = 0;
-    });
+    this.coupled = [];
+    for (const m of this.movers) { m.state = 'rewind'; m.speed = 0; }
   }
 
-  private finishReverse() {
-    const cp = this.revTarget!;
-    this.headD = cp.d;
-    this.trail.truncate(cp.d);
-    this.checkpoints = this.checkpoints.filter(c => c.d < cp.d - 1e-6);
-    this.pending = { x: cp.x, y: cp.y, dir: cp.dir };
-    this.revTarget = null;
+  private finishRewind() {
+    for (const m of this.movers) {
+      m.d = m.d0;
+      m.trail.truncate(m.len0);
+      m.pending = { ...m.start };
+      m.state = 'idle';
+    }
     this.mode = 'edit';
     sfx.boop();
     this.checkComplete();
-    // nudge: if we stopped at a switch, wiggle it
-    const sp = this.grid.get(key(cp.x, cp.y));
-    if (sp?.type === 'switch') {
-      const m = this.markers.get(key(cp.x, cp.y))!;
-      this.tweens.add({ targets: m, scale: 1.25, duration: 250, yoyo: true, repeat: 2 });
-    }
   }
 
+  private coupleOn(m: Mover) {
+    m.state = 'coupled';
+    m.speed = 0;
+    this.coupled.push(m);
+    sfx.clunk();
+    const t = this.frontOf(m);
+    this.starBurst(this.px(t.x), this.py(t.y) - this.cell * 0.15);
+    m.v.squash(this);
+    if (this.coupled.length === 1) this.engine.squash(this);
+    else this.coupled[this.coupled.length - 2].v.squash(this);
+    if (this.coupled.length === this.movers.length) this.time.delayedCall(700, () => this.startDeparture());
+  }
+
+  private startDeparture() {
+    this.mode = 'pause';
+    sfx.whistle();
+    for (let i = 0; i < 6; i++) this.time.delayedCall(i * 90, () => { const sp = this.engine.smokePoint; this.smoke.emitParticleAt(sp.x, sp.y, 2); });
+    // the whole train leaves along the last carriage's track, through the engine square and into the tunnel
+    const last = this.coupled[this.coupled.length - 1];
+    const trail = new Trail();
+    trail.add(last.trail.pts.slice(0, Math.max(2, last.trail.pts.length)));
+    let { x, y, dir } = last.pending;
+    let exitD = trail.length + 20;
+    for (let guard = 0; guard < 30; guard++) {
+      const p = this.grid.get(key(x, y));
+      if (!p) break;
+      const entry = opp(dir);
+      const out = p.type === 'engine' ? (p.rot as Dir) : traverse(p, entry);
+      if (out === null) break;
+      if (p.type === 'exit') { exitD = trail.length + 0.5; trail.add([{ x: x + 0.5, y: y + 0.5 }, { x: x + 0.5 + DX[out] * 6, y: y + 0.5 + DY[out] * 6 }]); break; }
+      trail.add(cellPath(x, y, entry, out));
+      x += DX[out]; y += DY[out]; dir = out;
+    }
+    this.depart = { trail, d: last.d, exitD, speed: 0 };
+    this.time.delayedCall(900, () => { this.mode = 'depart'; });
+  }
+
+  private celebrateOnce = false;
+
   private celebrate() {
+    if (this.celebrateOnce) return;
+    this.celebrateOnce = true;
     this.mode = 'done';
     const last = this.li === LEVELS.length - 1;
     sfx.tada();
     sfx.whistle();
-    say(last ? lines.bigWin() : lines.win());
     const colors = [0xff6fa5, 0xffd23f, 0x4aa3df, 0x3fcf6f, 0xff8a3d, 0xa78bfa];
     const conf = this.add.particles(0, 0, 'confetti', {
       x: { min: 0, max: W }, y: -30, lifespan: 4000, speedY: { min: 250, max: 600 }, speedX: { min: -120, max: 120 },
@@ -647,67 +688,110 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: s, scale: 1.1, alpha: 0, angle: 90, duration: 600, ease: 'Cubic.Out', onComplete: () => s.destroy() });
   }
 
-  private placeAt(img: Phaser.GameObjects.Image, d: number, bob: number) {
-    const p = this.trail.at(Math.max(0, d));
-    img.setPosition(this.px(p.x), this.py(p.y) + bob);
-    img.setRotation(p.angle);
-    const c = Math.cos(p.angle);
-    let f = this.flip.get(img) ?? false;
-    if (c < -0.2) f = true; else if (c > 0.2) f = false;
-    this.flip.set(img, f);
-    img.setFlipY(f);
+  private placeMover(m: Mover, bob = 0) {
+    const p = this.centreOf(m);
+    m.v.setPose(this.px(p.x), this.py(p.y), p.angle, bob);
   }
 
-  private placeTrain(time: number) {
-    const moving = this.mode === 'run' || this.mode === 'reverse' || this.mode === 'exiting';
-    const bob = moving ? Math.sin(time / 70) * 2 : 0;
-    const ed = this.headD - ENG_BACK;
-    this.placeAt(this.engine, ed, bob);
-    this.cars.forEach((c, i) => this.placeAt(c, ed - FIRST_GAP - i * CAR_GAP, moving ? Math.sin(time / 70 + i + 1) * 2 : 0));
-    if (this.mode === 'exiting') {
-      this.engine.setVisible(ed < this.exitD + 0.15);
-      this.cars.forEach((c, i) => c.setVisible(ed - FIRST_GAP - i * CAR_GAP < this.exitD + 0.15));
-    }
+  private placeDeparting(time: number) {
+    const dp = this.depart!;
+    const n = this.coupled.length;
+    const bob = (i: number) => Math.sin(time / 60 + i) * 1.5;
+    // carriage k (1-based) has its front at d + (n - k) * CAR_L; the engine is in front of carriage 1
+    this.coupled.forEach((m, i) => {
+      const cd = dp.d + (n - 1 - i) * CAR_L - CAR_L / 2;
+      const p = dp.trail.at(cd);
+      m.v.setPose(this.px(p.x), this.py(p.y), p.angle, bob(i));
+      m.v.setVisible(cd < dp.exitD + 0.15);
+    });
+    const ed = dp.d + (n - 1) * CAR_L + 0.02 + ENG_L / 2;
+    const e = dp.trail.at(ed);
+    this.engine.setPose(this.px(e.x), this.py(e.y), e.angle, bob(9));
+    this.engine.setVisible(ed < dp.exitD + 0.15);
+    const lastCd = dp.d - CAR_L / 2;
+    if (lastCd > dp.exitD + 0.3) this.celebrate();
   }
 
   private puff(dt: number) {
     if (!this.engine.visible) return;
-    const moving = this.mode === 'run' || this.mode === 'reverse' || this.mode === 'exiting';
+    const moving = this.mode === 'depart';
     this.puffTimer -= dt;
     if (this.puffTimer > 0) return;
-    this.puffTimer = moving ? 0.2 : 0.9;
-    const k = this.engine.scaleX;
-    const lx = 50 * k, ly = (this.engine.flipY ? 73 : -73) * k;
-    const r = this.engine.rotation;
-    this.smoke.emitParticleAt(this.engine.x + lx * Math.cos(r) - ly * Math.sin(r), this.engine.y + lx * Math.sin(r) + ly * Math.cos(r), 1);
+    this.puffTimer = moving ? 0.18 : 0.8;
+    const sp = this.engine.smokePoint;
+    this.smoke.emitParticleAt(sp.x, sp.y, 1);
     if (moving && this.puffCount++ % 2 === 0) sfx.chuff();
+  }
+
+  private checkContacts() {
+    const tail = this.tailPoint();
+    const next = this.coupled.length + 1;
+    for (const m of this.movers) {
+      if (m.state !== 'move' && m.state !== 'stop') continue;
+      const f = this.frontOf(m);
+      if (Math.hypot(f.x - tail.x, f.y - tail.y) < 0.14) {
+        if (m.num === next) { this.coupleOn(m); return; }
+        this.bump(m, null); // wrong order: a soft bump, then everyone rolls back
+        return;
+      }
+    }
+    // carriages bumping into each other
+    const lim = CAR_L * 0.82;
+    for (let i = 0; i < this.movers.length; i++) for (let j = i + 1; j < this.movers.length; j++) {
+      const a = this.movers[i], b = this.movers[j];
+      if (a.state !== 'move' && b.state !== 'move') continue;
+      const pa = this.centreOf(a), pb = this.centreOf(b);
+      if (Math.hypot(pa.x - pb.x, pa.y - pb.y) < lim) { this.bump(a.state === 'move' ? a : b, a.state === 'move' ? b : a); return; }
+    }
+    // carriages bumping into the engine from the wrong side
+    const e = { x: this.enginePiece.x + 0.5, y: this.enginePiece.y + 0.5 };
+    for (const m of this.movers) {
+      if (m.state !== 'move') continue;
+      const c = this.centreOf(m);
+      if (Math.hypot(c.x - e.x, c.y - e.y) < (ENG_L + CAR_L) / 2 * 0.8) { this.bump(m, null); return; }
+    }
   }
 
   update(time: number, deltaMs: number) {
     const dt = Math.min(0.05, deltaMs / 1000);
-    if (this.mode === 'run' || this.mode === 'exiting') {
-      this.speed = Math.min(SPEED, this.speed + 2.5 * dt);
-      this.headD += this.speed * dt;
-      let guard = 0;
-      while (this.mode === 'run' && this.headD >= this.trail.length && guard++ < 4) {
-        const over = this.headD - this.trail.length;
-        this.headD = this.trail.length;
-        this.decide();
-        if (this.mode === 'run') this.headD += over;
+    if (this.mode === 'run') {
+      for (const m of this.movers) {
+        if (m.state !== 'move') continue;
+        m.speed = Math.min(SPEED, m.speed + 2.5 * dt);
+        m.d += m.speed * dt;
+        let guard = 0;
+        while (m.state === 'move' && m.d >= m.trail.length && guard++ < 4) {
+          const over = m.d - m.trail.length;
+          m.d = m.trail.length;
+          this.advance(m);
+          if (m.state === 'move') m.d += over;
+        }
       }
-      if (this.mode === 'exiting') {
-        const lastD = this.headD - ENG_BACK - FIRST_GAP - Math.max(0, this.cars.length - 1) * CAR_GAP - (this.cars.length ? 0 : -FIRST_GAP);
-        if (lastD > this.exitD + 0.6) this.celebrate();
+      this.checkContacts();
+      if (this.mode === 'run' && !this.movers.some(m => m.state === 'move') && this.coupled.length < this.movers.length) {
+        // everyone has stopped but the train isn't complete: roll back and try again
+        this.mode = 'pause';
+        sfx.wobble();
+        this.time.delayedCall(900, () => this.startRewind());
       }
-    } else if (this.mode === 'reverse' && this.revTarget) {
-      this.speed = Math.min(REV_SPEED, this.speed + 3 * dt);
-      this.headD -= this.speed * dt;
-      if (this.headD <= this.revTarget.d) this.finishReverse();
+    } else if (this.mode === 'rewind') {
+      let busy = false;
+      for (const m of this.movers) {
+        if (m.d <= m.d0) continue;
+        m.speed = Math.min(REV_SPEED, m.speed + 4 * dt);
+        m.d = Math.max(m.d0, m.d - m.speed * dt);
+        busy = true;
+      }
+      if (!busy) this.finishRewind();
+    } else if (this.mode === 'depart' && this.depart) {
+      this.depart.speed = Math.min(SPEED, this.depart.speed + 1.5 * dt);
+      this.depart.d += this.depart.speed * dt;
     } else if (this.mode === 'edit') {
       this.idle += dt;
       if (this.idle > 10) { this.idle = 0; this.showHint(); }
     }
-    this.placeTrain(time);
+    if (this.depart && (this.mode === 'depart' || this.mode === 'done')) this.placeDeparting(time);
+    else for (const m of this.movers) this.placeMover(m, m.state === 'move' || m.state === 'rewind' ? Math.sin(time / 60 + m.num) * 1.5 : 0);
     this.puff(dt);
   }
 }

@@ -12,118 +12,105 @@ function make(scene: Phaser.Scene, key: string, w: number, h: number, draw: (g: 
   g.destroy();
 }
 
-function wheel(g: Phaser.GameObjects.Graphics, x: number, y: number, r: number) {
-  g.fillStyle(INK).fillCircle(x, y, r + 4);
-  g.fillStyle(0x4a4a5a).fillCircle(x, y, r);
-  g.fillStyle(0xe8483f).fillCircle(x, y, r * 0.45);
-  g.fillStyle(0xffffff, 0.5).fillCircle(x - r * 0.3, y - r * 0.3, r * 0.15);
-}
-
-function outlinedRect(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, r: number, fill: number) {
-  g.fillStyle(INK).fillRoundedRect(x - 4, y - 4, w + 8, h + 8, r + 3);
+function outlinedRect(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, r: number, fill: number, ink = 5) {
+  g.fillStyle(INK).fillRoundedRect(x - ink, y - ink, w + ink * 2, h + ink * 2, r + ink * 0.6);
   g.fillStyle(fill).fillRoundedRect(x, y, w, h, r);
 }
+function outlinedCircle(g: Phaser.GameObjects.Graphics, x: number, y: number, r: number, fill: number, ink = 5) {
+  g.fillStyle(INK).fillCircle(x, y, r + ink);
+  g.fillStyle(fill).fillCircle(x, y, r);
+}
 
-function face(g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number) {
-  g.fillStyle(INK).fillCircle(cx, cy, r + 4);
-  g.fillStyle(0xf4f1ea).fillCircle(cx, cy, r);
-  // eyes
-  for (const ex of [-0.38, 0.32]) {
-    g.fillStyle(0xffffff).fillEllipse(cx + ex * r, cy - 0.22 * r, 0.42 * r, 0.52 * r);
-    g.lineStyle(3, INK).strokeEllipse(cx + ex * r, cy - 0.22 * r, 0.42 * r, 0.52 * r);
-    g.fillStyle(INK).fillCircle(cx + ex * r + 0.07 * r, cy - 0.18 * r, 0.12 * r);
-    g.fillStyle(0xffffff).fillCircle(cx + ex * r + 0.1 * r, cy - 0.24 * r, 0.04 * r);
+// Vehicles are seen from high above. Each has a "base" (chassis + sides, drawn on the ground) and a "top"
+// (roof/boiler, drawn raised up the screen), which together give a chunky 3D look from any direction.
+// All face +x. Engine 200 x 110 px, carriages 172 x 104 px at REF scale.
+export const VEH = {
+  engine: { w: 200, h: 110, lift: 0.16 },
+  car: { w: 172, h: 104, lift: 0.15 },
+};
+
+function chassis(g: Phaser.GameObjects.Graphics, w: number, h: number, side: number, sideDark: number) {
+  // couplers
+  g.fillStyle(INK).fillRect(0, h / 2 - 7, 14, 14).fillRect(w - 14, h / 2 - 7, 14, 14);
+  // wheels peeking out
+  for (const x of [w * 0.25, w * 0.75]) {
+    g.fillStyle(INK).fillRoundedRect(x - 18, 4, 36, h - 8, 8);
   }
-  // cheeks
-  g.fillStyle(0xff8a9a, 0.8).fillCircle(cx - 0.62 * r, cy + 0.25 * r, 0.14 * r).fillCircle(cx + 0.6 * r, cy + 0.25 * r, 0.14 * r);
-  // smile
-  g.lineStyle(5, INK);
-  g.beginPath();
-  g.arc(cx, cy + 0.12 * r, 0.38 * r, 0.15 * Math.PI, 0.85 * Math.PI, false);
-  g.strokePath();
+  outlinedRect(g, 12, 12, w - 24, h - 24, 12, sideDark);
+  g.fillStyle(side).fillRoundedRect(18, 18, w - 36, h - 36, 8);
 }
 
 export function makeTextures(scene: Phaser.Scene) {
-  // White steam engine, facing right. 200 x 170, rails at y ~ 135
-  make(scene, 'engine', 210, 170, g => {
-    g.fillStyle(0x000000, 0.15).fillEllipse(105, 150, 190, 22);
-    outlinedRect(g, 10, 104, 185, 18, 6, 0xc8343b); // chassis
-    // cab
-    outlinedRect(g, 6, 18, 80, 16, 8, 0x2f6fd1); // roof
-    outlinedRect(g, 14, 32, 64, 76, 6, 0xffffff);
-    g.fillStyle(INK).fillRoundedRect(26, 44, 40, 30, 8);
-    g.fillStyle(0xbfe6ff).fillRoundedRect(30, 48, 32, 22, 6);
-    // boiler
-    outlinedRect(g, 74, 56, 100, 52, 22, 0xffffff);
-    g.fillStyle(0x2f6fd1).fillRect(100, 56, 9, 52).fillRect(138, 56, 9, 52);
+  const E = VEH.engine, C = VEH.car;
+  // --- white steam engine ---
+  make(scene, 'engine-base', E.w, E.h, g => {
+    g.fillStyle(INK).fillRect(0, E.h / 2 - 7, 14, 14);
+    for (const x of [40, 95, 140]) g.fillStyle(INK).fillRoundedRect(x - 16, 4, 32, E.h - 8, 8);
+    g.fillStyle(0xe8483f).fillRoundedRect(28, 8, 124, 8, 3).fillRoundedRect(28, E.h - 16, 124, 8, 3);
+    outlinedRect(g, 12, 16, 168, E.h - 32, 12, 0xaeb4bd);
+    // red cowcatcher at the front
+    g.fillStyle(INK).fillTriangle(172, 10, 200, E.h / 2, 172, E.h - 10);
+    g.fillStyle(0xe8483f).fillTriangle(176, 20, 192, E.h / 2, 176, E.h - 20);
+  });
+  make(scene, 'engine-top', E.w, E.h, g => {
+    // boiler (a white cylinder seen from above)
+    outlinedRect(g, 64, 26, 110, 58, 26, 0xffffff);
+    g.fillStyle(0xffffff, 1).fillRoundedRect(76, 34, 90, 10, 5);
+    g.fillStyle(0x2f6fd1).fillRect(96, 26, 8, 58).fillRect(132, 26, 8, 58);
     // dome
-    g.fillStyle(INK).fillCircle(118, 56, 16);
-    g.fillStyle(0xffc93c).fillCircle(118, 56, 12);
-    g.fillStyle(0xffffff).fillRect(100, 57, 40, 4);
-    // chimney
-    outlinedRect(g, 146, 20, 18, 38, 3, 0x3b3b4a);
-    outlinedRect(g, 140, 12, 30, 12, 5, 0x3b3b4a);
-    // face on the smokebox front
-    face(g, 172, 82, 28);
-    // cowcatcher
-    g.fillStyle(INK).fillTriangle(178, 104, 208, 136, 178, 136);
-    g.fillStyle(0xe8483f).fillTriangle(182, 110, 200, 132, 182, 132);
-    wheel(g, 50, 128, 22);
-    wheel(g, 104, 128, 22);
-    wheel(g, 160, 134, 14);
-    // connecting rod
-    g.fillStyle(0x9aa3ad).fillRoundedRect(46, 124, 64, 8, 4);
+    outlinedCircle(g, 116, 55, 11, 0xffc93c, 4);
+    // cute eyes on the smokebox front
+    for (const y of [42, 68]) {
+      g.fillStyle(INK).fillEllipse(166, y, 20, 18);
+      g.fillStyle(0xffffff).fillEllipse(166, y, 15, 13);
+      g.fillStyle(INK).fillCircle(169, y, 4.5);
+      g.fillStyle(0xffffff).fillCircle(170, y - 2, 1.6);
+    }
+    // cab with blue roof
+    outlinedRect(g, 10, 12, 62, E.h - 24, 10, 0x2f6fd1);
+    g.fillStyle(0x6fa3f0).fillRoundedRect(18, 20, 46, 10, 5);
+    g.lineStyle(3, 0x1d4a8f).lineBetween(41, 16, 41, E.h - 16);
+  });
+  make(scene, 'engine-chimney', 44, 44, g => {
+    outlinedCircle(g, 22, 22, 15, 0x4a4a5a, 5);
+    g.fillStyle(0x1b1a24).fillCircle(22, 22, 9);
   });
 
-  const carBase = (g: Phaser.GameObjects.Graphics) => {
-    g.fillStyle(0x000000, 0.15).fillEllipse(90, 150, 170, 20);
-    g.fillStyle(INK).fillRect(0, 112, 12, 8).fillRect(168, 112, 12, 8); // couplers
-    outlinedRect(g, 12, 106, 156, 14, 5, 0x4a4a5a);
-    wheel(g, 48, 130, 18);
-    wheel(g, 132, 130, 18);
-  };
-
-  make(scene, 'car-coal', 180, 170, g => {
-    carBase(g);
-    // coal lumps
-    const lumps = [[30, 52], [50, 44], [72, 50], [92, 42], [112, 50], [134, 44], [152, 52], [62, 58], [102, 58], [142, 60]];
-    for (const [x, y] of lumps) { g.fillStyle(INK).fillCircle(x, y, 17); g.fillStyle(0x3a3a44).fillCircle(x, y, 13); g.fillStyle(0x6a6a78).fillCircle(x - 4, y - 4, 4); }
-    outlinedRect(g, 16, 58, 148, 50, 8, 0xe8483f);
-    g.fillStyle(0xb8323a).fillRect(16, 92, 148, 16);
-    g.fillStyle(0xffffff, 0.35).fillRoundedRect(24, 64, 132, 8, 4);
-    for (const x of [56, 90, 124]) g.fillStyle(0xb8323a).fillRect(x, 58, 6, 50);
+  // --- carriages ---
+  make(scene, 'coal-base', C.w, C.h, g => chassis(g, C.w, C.h, 0xc8343b, 0x9e2730));
+  make(scene, 'coal-top', C.w, C.h, g => {
+    outlinedRect(g, 16, 14, C.w - 32, C.h - 28, 10, 0xe8483f);
+    g.fillStyle(0x2b2a33).fillRoundedRect(26, 24, C.w - 52, C.h - 48, 6);
+    const lumps = [[40, 34], [62, 40], [86, 33], [110, 41], [132, 35], [48, 58], [74, 62], [98, 56], [122, 62], [140, 55], [60, 76], [92, 74], [118, 78]];
+    for (const [x, y] of lumps) { g.fillStyle(0x15141b).fillCircle(x, y, 12); g.fillStyle(0x4a4955).fillCircle(x, y, 9); g.fillStyle(0x7b7a88).fillCircle(x - 3, y - 3, 3); }
+    g.fillStyle(0xff7a7f).fillRoundedRect(24, 17, C.w - 48, 4, 2);
   });
-
-  make(scene, 'car-passenger', 180, 170, g => {
-    carBase(g);
-    outlinedRect(g, 8, 24, 164, 16, 8, 0x1f8a4c); // roof
-    outlinedRect(g, 14, 38, 152, 70, 8, 0x3fbf6f);
-    g.fillStyle(0xfff3b0).fillRect(14, 92, 152, 6);
-    const skins = [0xffd2a6, 0xc68a5b, 0xffe0c2];
-    const hair = [0x6b3e1f, 0x222222, 0xf2c14e];
-    [26, 72, 118].forEach((x, i) => {
-      g.fillStyle(INK).fillRoundedRect(x - 3, 47, 42, 38, 8);
-      g.fillStyle(0xcdeeff).fillRoundedRect(x, 50, 36, 32, 6);
-      // a little passenger
-      g.fillStyle(hair[i]).fillCircle(x + 18, 64, 12);
-      g.fillStyle(skins[i]).fillCircle(x + 18, 68, 10);
-      g.fillStyle(INK).fillCircle(x + 14, 67, 2).fillCircle(x + 22, 67, 2);
-      g.lineStyle(2, INK).beginPath().arc(x + 18, 70, 4, 0.1 * Math.PI, 0.9 * Math.PI, false).strokePath();
-    });
+  make(scene, 'passenger-base', C.w, C.h, g => {
+    chassis(g, C.w, C.h, 0x3fbf6f, 0x2a9a55);
+    // windows along the sides
+    for (let x = 30; x < C.w - 40; x += 30) {
+      g.fillStyle(INK).fillRoundedRect(x - 2, C.h - 28, 22, 12, 3);
+      g.fillStyle(0xcdeeff).fillRoundedRect(x, C.h - 26, 18, 8, 2);
+    }
   });
-
-  make(scene, 'car-tank', 180, 170, g => {
-    carBase(g);
-    g.fillStyle(INK).fillRoundedRect(84, 22, 20, 22, 4);
-    g.fillStyle(0xd9a514).fillRoundedRect(88, 26, 12, 18, 3);
-    outlinedRect(g, 14, 40, 152, 66, 33, 0xffc93c);
-    g.fillStyle(0xd9a514).fillRect(52, 40, 8, 66).fillRect(120, 40, 8, 66);
-    g.fillStyle(0xffffff, 0.45).fillRoundedRect(30, 50, 120, 10, 5);
+  make(scene, 'passenger-top', C.w, C.h, g => {
+    outlinedRect(g, 10, 12, C.w - 20, C.h - 24, 14, 0xfff3d6);
+    g.fillStyle(0x1f8a4c).fillRoundedRect(10, C.h / 2 - 5, C.w - 20, 10, 2);
+    for (const x of [48, 86, 124]) outlinedRect(g, x - 10, 26, 20, 14, 4, 0xd9c79a, 3);
+  });
+  make(scene, 'tank-base', C.w, C.h, g => chassis(g, C.w, C.h, 0x6b6f7a, 0x4a4e58));
+  make(scene, 'tank-top', C.w, C.h, g => {
+    outlinedRect(g, 14, 20, C.w - 28, C.h - 40, (C.h - 40) / 2, 0xffc93c);
+    g.fillStyle(0xfff1b8).fillRoundedRect(34, 28, C.w - 68, 8, 4);
+    g.fillStyle(0xd9930f).fillRect(56, 20, 6, C.h - 40).fillRect(110, 20, 6, C.h - 40);
+    outlinedCircle(g, C.w / 2, C.h / 2 - 4, 13, 0xffd966, 4);
+    g.fillStyle(INK).fillCircle(C.w / 2, C.h / 2 - 4, 4);
   });
 
   make(scene, 'puff', 80, 80, g => {
-    g.fillStyle(0xffffff, 0.35).fillCircle(40, 40, 38);
-    g.fillStyle(0xffffff, 0.9).fillCircle(40, 40, 30);
+    g.fillStyle(0xb9c2cc).fillCircle(42, 44, 34);
+    g.fillStyle(0xffffff).fillCircle(38, 38, 32);
+    g.fillStyle(0xffffff, 1).fillCircle(30, 30, 12);
   });
   make(scene, 'confetti', 16, 26, g => { g.fillStyle(0xffffff).fillRect(0, 0, 16, 26); });
   make(scene, 'star', 80, 80, g => {
@@ -136,47 +123,68 @@ export function makeTextures(scene: Phaser.Scene) {
     g.lineStyle(4, 0xf59e0b).strokePoints(pts, true);
   });
 
-  // Scenery
+  // --- scenery, seen from above, with shadows falling down-right ---
+  const SH = 0x2f5e24;
   make(scene, 'tree', REF, REF, g => {
-    g.fillStyle(0x000000, 0.15).fillEllipse(100, 165, 120, 30);
-    g.fillStyle(0x8b5a2b).fillRoundedRect(88, 110, 24, 55, 6);
-    g.fillStyle(0x2f8f3a).fillCircle(100, 85, 58);
-    g.fillStyle(0x47b04f).fillCircle(85, 72, 40).fillCircle(120, 90, 36);
-    g.fillStyle(0xe8483f).fillCircle(70, 95, 8).fillCircle(118, 62, 8).fillCircle(130, 105, 8);
+    g.fillStyle(SH, 0.35).fillCircle(118, 122, 62);
+    g.fillStyle(0x6b4423).fillRoundedRect(92, 120, 18, 40, 6);
+    outlinedCircle(g, 100, 92, 60, 0x2f8f3a, 6);
+    g.fillStyle(0x3fa64a).fillCircle(90, 82, 44);
+    g.fillStyle(0x5cc062).fillCircle(78, 70, 22);
+    g.fillStyle(0xe8483f).fillCircle(64, 104, 7).fillCircle(122, 64, 7).fillCircle(132, 110, 7);
+  });
+  make(scene, 'pine', REF, REF, g => {
+    g.fillStyle(SH, 0.35).fillEllipse(124, 128, 120, 90);
+    for (const [r, c] of [[62, 0x1f6b3a], [46, 0x2a8a4a], [30, 0x3aa65c], [14, 0x57c178]] as const) {
+      const pts = [] as Phaser.Math.Vector2[];
+      for (let i = 0; i < 16; i++) { const a = i * Math.PI / 8, rr = i % 2 ? r * 0.78 : r; pts.push(new Phaser.Math.Vector2(100 + Math.cos(a) * rr, 96 + Math.sin(a) * rr - (62 - r) * 0.4)); }
+      g.fillStyle(INK).fillPoints(pts.map(p => new Phaser.Math.Vector2(100 + (p.x - 100) * 1.08, 96 + (p.y - 96) * 1.08)), true);
+      g.fillStyle(c).fillPoints(pts, true);
+    }
   });
   make(scene, 'bush', REF, REF, g => {
-    g.fillStyle(0x000000, 0.12).fillEllipse(100, 140, 140, 26);
-    g.fillStyle(0x3a9e45).fillCircle(70, 110, 36).fillCircle(130, 110, 36).fillCircle(100, 92, 42);
-    g.fillStyle(0x5cc062).fillCircle(90, 85, 18).fillCircle(125, 98, 14);
+    g.fillStyle(SH, 0.35).fillEllipse(116, 124, 130, 70);
+    for (const [x, y, r] of [[72, 104, 32], [128, 104, 32], [100, 84, 38]] as const) outlinedCircle(g, x, y, r, 0x3a9e45, 5);
+    g.fillStyle(0x3a9e45).fillCircle(72, 104, 32).fillCircle(128, 104, 32).fillCircle(100, 84, 38);
+    g.fillStyle(0x5cc062).fillCircle(88, 76, 16).fillCircle(124, 96, 12);
+    g.fillStyle(0xff8fb1).fillCircle(70, 96, 6).fillCircle(112, 70, 6).fillCircle(136, 110, 6);
+  });
+  make(scene, 'rock', REF, REF, g => {
+    g.fillStyle(SH, 0.35).fillEllipse(112, 118, 120, 70);
+    outlinedRect(g, 52, 64, 96, 66, 26, 0x9a948c, 6);
+    g.fillStyle(0xbdb7ae).fillRoundedRect(60, 68, 70, 30, 14);
+    outlinedCircle(g, 140, 128, 16, 0x9a948c, 5);
   });
   make(scene, 'flowers', REF, REF, g => {
-    const fl = [[55, 70, 0xff6fa5], [120, 55, 0xffd23f], [150, 120, 0xffffff], [80, 135, 0xa78bfa], [110, 100, 0xff8a3d]];
+    const fl = [[55, 70, 0xff6fa5], [120, 55, 0xffd23f], [150, 120, 0xffffff], [80, 135, 0xa78bfa], [110, 100, 0xff8a3d]] as const;
     for (const [x, y, c] of fl) {
-      g.lineStyle(5, 0x2f8f3a).lineBetween(x, y, x, y + 30);
+      g.fillStyle(0x2f8f3a).fillCircle(x + 6, y + 8, 14);
+      g.fillStyle(INK);
+      for (let i = 0; i < 5; i++) { const a = i * Math.PI * 2 / 5; g.fillCircle(x + Math.cos(a) * 11, y + Math.sin(a) * 11, 11); }
       g.fillStyle(c);
-      for (let i = 0; i < 5; i++) { const a = i * Math.PI * 2 / 5; g.fillCircle(x + Math.cos(a) * 11, y + Math.sin(a) * 11, 9); }
-      g.fillStyle(0xffb020).fillCircle(x, y, 7);
+      for (let i = 0; i < 5; i++) { const a = i * Math.PI * 2 / 5; g.fillCircle(x + Math.cos(a) * 11, y + Math.sin(a) * 11, 8); }
+      g.fillStyle(0xffb020).fillCircle(x, y, 6);
     }
   });
   make(scene, 'pond', REF, REF, g => {
-    g.fillStyle(0x4aa3df).fillEllipse(100, 105, 170, 120);
-    g.fillStyle(0x7cc6f2).fillEllipse(85, 95, 110, 60);
-    // duck
-    g.fillStyle(0xffd23f).fillEllipse(115, 110, 46, 30).fillCircle(132, 92, 14);
-    g.fillStyle(0xff8a3d).fillTriangle(142, 90, 156, 95, 142, 98);
-    g.fillStyle(INK).fillCircle(135, 89, 3);
+    g.fillStyle(INK).fillEllipse(100, 102, 184, 134);
+    g.fillStyle(0x3f97d6).fillEllipse(100, 102, 172, 122);
+    g.fillStyle(0x6fc0f0).fillEllipse(86, 90, 110, 56);
+    g.lineStyle(4, 0xffffff, 0.8).beginPath().arc(70, 84, 26, Math.PI * 1.1, Math.PI * 1.5).strokePath();
+    // duck from above
+    outlinedCircle(g, 126, 112, 16, 0xffd23f, 4);
+    outlinedCircle(g, 138, 100, 9, 0xffd23f, 4);
+    g.fillStyle(0xff8a3d).fillTriangle(144, 94, 154, 92, 146, 102);
   });
   make(scene, 'cow', REF, REF, g => {
-    g.fillStyle(0x000000, 0.12).fillEllipse(100, 160, 140, 24);
-    g.fillStyle(INK).fillRect(55, 120, 12, 38).fillRect(125, 120, 12, 38);
-    g.fillStyle(INK).fillRoundedRect(36, 66, 118, 66, 30);
-    g.fillStyle(0xffffff).fillRoundedRect(40, 70, 110, 58, 26);
-    g.fillStyle(INK).fillCircle(70, 90, 14).fillCircle(115, 108, 12);
-    g.fillStyle(INK).fillCircle(150, 78, 30);
-    g.fillStyle(0xffffff).fillCircle(150, 78, 26);
-    g.fillStyle(0xffb3c1).fillEllipse(160, 92, 30, 18);
-    g.fillStyle(INK).fillCircle(146, 70, 4).fillCircle(162, 70, 4);
-    g.fillStyle(0xd9a514).fillTriangle(132, 52, 138, 38, 144, 54).fillTriangle(158, 54, 164, 38, 170, 52);
+    g.fillStyle(SH, 0.35).fillEllipse(110, 112, 150, 80);
+    outlinedRect(g, 40, 70, 104, 60, 28, 0xffffff, 6);
+    g.fillStyle(INK).fillCircle(70, 86, 12).fillCircle(112, 112, 10).fillCircle(124, 80, 7);
+    outlinedCircle(g, 156, 100, 24, 0xffffff, 6);
+    g.fillStyle(0xffb3c1).fillEllipse(170, 100, 18, 26);
+    g.fillStyle(INK).fillCircle(156, 90, 3.5).fillCircle(156, 110, 3.5);
+    g.fillStyle(0xd9a514).fillCircle(146, 78, 6).fillCircle(146, 122, 6);
+    g.lineStyle(6, INK).lineBetween(40, 100, 26, 108);
   });
 }
 
@@ -194,24 +202,24 @@ function offsetLine(pts: Pt[], off: number): Phaser.Math.Vector2[] {
   });
 }
 
-export function drawRails(g: Phaser.GameObjects.Graphics, a: Dir, b: Dir, s: number, fixed: boolean, alpha = 1, railColor = 0xc9d1da) {
+export function drawRails(g: Phaser.GameObjects.Graphics, a: Dir, b: Dir, s: number, fixed: boolean, alpha = 1, railColor = 0xf4f4ef) {
   const pts = toLocal(cellPath(0, 0, a, b, 16), s);
-  const sleeperColor = fixed ? 0x9a948c : 0xa8693a;
-  const sleeperDark = fixed ? 0x6e6a64 : 0x7a4a26;
+  const sleeperColor = fixed ? 0x9b6a3e : 0xc98a4b;
+  const sleeperDark = INK;
   // sleepers
   const n = a === opp(b) ? 4 : 3;
   for (let i = 0; i < n; i++) {
     const idx = Math.round(((i + 0.5) / n) * (pts.length - 1));
     const p = pts[idx], q = pts[Math.min(idx + 1, pts.length - 1)], r = pts[Math.max(idx - 1, 0)];
     const dx = q.x - r.x, dy = q.y - r.y, l = Math.hypot(dx, dy) || 1;
-    const nx = -dy / l, ny = dx / l, half = s * 0.27;
-    g.lineStyle(s * 0.13, sleeperDark, alpha).lineBetween(p.x - nx * half, p.y - ny * half, p.x + nx * half, p.y + ny * half);
+    const nx = -dy / l, ny = dx / l, half = s * 0.31;
+    g.lineStyle(s * 0.14, sleeperDark, alpha).lineBetween(p.x - nx * half, p.y - ny * half, p.x + nx * half, p.y + ny * half);
     g.lineStyle(s * 0.09, sleeperColor, alpha).lineBetween(p.x - nx * half, p.y - ny * half, p.x + nx * half, p.y + ny * half);
   }
   for (const off of [-0.16, 0.16]) {
     const line = offsetLine(pts, off * s);
-    g.lineStyle(s * 0.075, 0x5d6670, alpha).strokePoints(line, false);
-    g.lineStyle(s * 0.04, railColor, alpha).strokePoints(line, false);
+    g.lineStyle(s * 0.085, INK, alpha).strokePoints(line, false);
+    g.lineStyle(s * 0.05, railColor, alpha).strokePoints(line, false);
   }
 }
 
@@ -221,15 +229,20 @@ export function drawPiece(g: Phaser.GameObjects.Graphics, p: Piece, s: number) {
   const fixed = p.fixed;
   switch (p.type) {
     case 'straight':
-    case 'curve':
-    case 'car': {
+    case 'curve': {
       const [a, b] = sides(p);
       drawRails(g, a, b, s, fixed);
       break;
     }
+    case 'engine': {
+      drawRails(g, opp(p.rot), p.rot as Dir, s, true);
+      break;
+    }
+    case 'car':
     case 'start': {
       const d = p.rot as Dir;
       drawRails(g, opp(d), d, s, true);
+      if (p.type === 'car' && !p.buffer) break;
       // buffer stop at the back
       const bx = -Math.cos(dirAngle(d)) * s * 0.42, by = -Math.sin(dirAngle(d)) * s * 0.42;
       const horiz = d % 2 === 1;

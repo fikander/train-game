@@ -1,5 +1,4 @@
-// Tiny synthesised sound effects (no audio files needed) + speech for the engine's voice.
-const CHILD = 'Alek';
+// Tiny synthesised sound effects (no audio files needed).
 
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
@@ -16,12 +15,6 @@ export function unlockAudio() {
     master.connect(ctx.destination);
   }
   if (ctx.state === 'suspended') ctx.resume();
-  // warm up speech synthesis on a user gesture (needed on Android/iOS)
-  if ('speechSynthesis' in window) {
-    const u = new SpeechSynthesisUtterance(' ');
-    u.volume = 0;
-    speechSynthesis.speak(u);
-  }
 }
 
 export function isMuted() { return muted; }
@@ -29,7 +22,6 @@ export function setMuted(m: boolean) {
   muted = m;
   try { localStorage.setItem('choo.muted', m ? '1' : '0'); } catch { /* ignore */ }
   if (master) master.gain.value = m ? 0 : 0.6;
-  if (m && 'speechSynthesis' in window) speechSynthesis.cancel();
 }
 
 function tone(freq: number, dur: number, type: OscillatorType = 'sine', vol = 0.3, endFreq?: number, delay = 0) {
@@ -103,6 +95,7 @@ export const sfx = {
   clack() { tone(620, 0.06, 'triangle', 0.25, 300); noise(0.04, 2500, 2, 0.2); },
   kachunk() { noise(0.06, 1500, 2, 0.3); tone(220, 0.1, 'square', 0.1, 90, 0.08); noise(0.08, 500, 1, 0.3, 0.1); },
   boop() { tone(500, 0.18, 'sine', 0.3, 900); },
+  boing() { tone(220, 0.35, 'sine', 0.35, 700); tone(330, 0.3, 'triangle', 0.15, 900, 0.05); noise(0.06, 900, 1, 0.2); },
   wobble() { tone(300, 0.25, 'sine', 0.25, 200); },
   pop() { tone(400, 0.12, 'sine', 0.3, 1400); },
   oops() { tone(500, 0.2, 'triangle', 0.25, 350); tone(350, 0.3, 'triangle', 0.25, 250, 0.22); },
@@ -112,37 +105,3 @@ export const sfx = {
   tweet() { tone(2000, 0.08, 'sine', 0.2, 3000); tone(2200, 0.1, 'sine', 0.2, 3200, 0.12); },
 };
 
-let voice: SpeechSynthesisVoice | null = null;
-function pickVoice() {
-  if (!('speechSynthesis' in window)) return;
-  const vs = speechSynthesis.getVoices();
-  voice = vs.find(v => /en[-_](GB|US)/i.test(v.lang) && /female|samantha|google/i.test(v.name))
-    ?? vs.find(v => /^en/i.test(v.lang)) ?? null;
-}
-if ('speechSynthesis' in window) {
-  pickVoice();
-  speechSynthesis.onvoiceschanged = pickVoice;
-}
-
-export function say(text: string) {
-  if (muted || !('speechSynthesis' in window)) return;
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  if (voice) u.voice = voice;
-  u.lang = voice?.lang ?? 'en-GB';
-  u.rate = 0.95;
-  u.pitch = 1.5;
-  speechSynthesis.speak(u);
-}
-
-const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
-
-export const lines = {
-  hello: () => pick([`Hi ${CHILD}!`, `Hello ${CHILD}!`, `Choo choo! Hi ${CHILD}!`, `Hi ${CHILD}! Let's build a track!`]),
-  go: () => pick(['Choo choo!', `Here we go, ${CHILD}!`, 'Choo choo! All aboard!']),
-  pickup: () => pick(['Yay!', 'Hello friend!', 'Clunk! Got it!', 'Hooray!']),
-  deadEnd: () => pick(['Oops! Back we go!', 'Uh oh! Beep beep, backing up!']),
-  missing: () => pick([`Wait ${CHILD}, we forgot a friend!`, 'Oh! Someone is still waiting!']),
-  win: () => pick([`Well done, ${CHILD}!`, `Hooray! Thank you, ${CHILD}!`, `Great job, ${CHILD}! Choo choo!`]),
-  bigWin: () => `Wow ${CHILD}! You built the biggest train! Choo choo!`,
-};

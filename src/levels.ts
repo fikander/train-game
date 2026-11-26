@@ -10,72 +10,62 @@ export interface Level {
   spare?: ('straight' | 'curve')[];
 }
 
+const KINDS: CarKind[] = ['coal', 'passenger', 'tank'];
 const S = (x: number, y: number, rot: number): Piece => ({ type: 'straight', x, y, rot, fixed: true });
 const C = (x: number, y: number, rot: number): Piece => ({ type: 'curve', x, y, rot, fixed: true });
-const START = (x: number, y: number, dir: Dir): Piece => ({ type: 'start', x, y, rot: dir, fixed: true });
+const ENGINE = (x: number, y: number, dir: Dir): Piece => ({ type: 'engine', x, y, rot: dir, fixed: true });
 const EXIT = (x: number, y: number, dir: Dir): Piece => ({ type: 'exit', x, y, rot: dir, fixed: true });
 const END = (x: number, y: number, open: Dir): Piece => ({ type: 'end', x, y, rot: open, fixed: true });
-const CAR = (x: number, y: number, rot: number, car: CarKind): Piece => ({ type: 'car', x, y, rot, car, fixed: true });
+/** carriage number n waiting at (x,y), will drive off towards `dir` */
+const CAR = (x: number, y: number, dir: Dir, n: number): Piece => ({ type: 'car', x, y, rot: dir, num: n, car: KINDS[(n - 1) % 3], fixed: true });
 const SW = (x: number, y: number, inDir: Dir, out1: Dir, out2: Dir, state: 0 | 1 = 0): Piece =>
   ({ type: 'switch', x, y, rot: 0, inDir, out1, out2, state, fixed: true });
 const gS = (x: number, y: number, rot: number): Gap => ({ x, y, type: 'straight', rot });
 const gC = (x: number, y: number, rot: number): Gap => ({ x, y, type: 'curve', rot });
 
 // Directions: 0 N, 1 E, 2 S, 3 W. Curve rot r joins sides r and r+1 (0 N-E, 1 E-S, 2 S-W, 3 W-N).
+// The engine waits near the end; carriages drive to it and must arrive in order 1, 2, 3.
+// Behind the engine there must be enough straight track for the whole train (about 0.8 squares per carriage).
 export const LEVELS: Level[] = [
-  // 1. Hello Train
-  { cols: 4, rows: 3, pieces: [START(0, 1, 1), CAR(2, 1, 0, 'coal'), EXIT(3, 1, 1)], gaps: [gS(1, 1, 0)] },
-  // 2. Longer Line
-  { cols: 6, rows: 3, pieces: [START(0, 1, 1), CAR(4, 1, 0, 'passenger'), EXIT(5, 1, 1)], gaps: [gS(1, 1, 0), gS(2, 1, 0), gS(3, 1, 0)] },
-  // 3. Around the Corner
-  { cols: 4, rows: 3, pieces: [START(0, 2, 1), CAR(2, 1, 1, 'tank'), EXIT(2, 0, 0)], gaps: [gS(1, 2, 0), gC(2, 2, 3)] },
-  // 4. Two Carriages
+  // 1. One carriage, one gap
+  { cols: 5, rows: 3, pieces: [CAR(0, 1, 1, 1), S(2, 1, 0), ENGINE(3, 1, 1), EXIT(4, 1, 1)], gaps: [gS(1, 1, 0)] },
+  // 2. Around the corner
   {
-    cols: 6, rows: 4,
-    pieces: [START(0, 3, 1), CAR(2, 3, 0, 'coal'), CAR(4, 1, 0, 'passenger'), EXIT(5, 1, 1)],
-    gaps: [gS(1, 3, 0), gC(3, 3, 3), gS(3, 2, 1), gC(3, 1, 1)],
+    cols: 5, rows: 3,
+    pieces: [CAR(0, 0, 1, 1), S(2, 1, 1), ENGINE(3, 2, 1), EXIT(4, 2, 1)],
+    gaps: [gS(1, 0, 0), gC(2, 0, 2), gC(2, 2, 0)],
   },
-  // 5. Meet the Switch (no track to place – just flip the switch)
+  // 3. Two in a row: 1 is in front, 2 follows
   {
-    cols: 6, rows: 3,
-    pieces: [START(0, 2, 1), S(1, 2, 0), SW(2, 2, 3, 1, 0), S(3, 2, 0), END(4, 2, 3),
-      CAR(2, 1, 1, 'tank'), C(2, 0, 1), S(3, 0, 0), S(4, 0, 0), EXIT(5, 0, 1)],
-    gaps: [],
+    cols: 7, rows: 3,
+    pieces: [CAR(0, 1, 1, 2), CAR(1, 1, 1, 1), S(4, 1, 0), ENGINE(5, 1, 1), EXIT(6, 1, 1)],
+    gaps: [gS(2, 1, 0), gS(3, 1, 0)],
   },
-  // 6. Switch and Back
+  // 4. Flip the switch: the straight way is a dead end
   {
-    cols: 6, rows: 3,
-    pieces: [START(0, 1, 1), S(1, 1, 0), SW(2, 1, 3, 1, 0), CAR(3, 1, 0, 'coal'), S(4, 1, 0), END(5, 1, 3),
-      C(2, 0, 1), CAR(3, 0, 0, 'passenger'), S(4, 0, 0), EXIT(5, 0, 1)],
-    gaps: [],
+    cols: 7, rows: 3,
+    pieces: [CAR(0, 2, 1, 1), S(1, 2, 0), SW(2, 2, 3, 1, 0), S(3, 2, 0), END(4, 2, 3),
+      C(2, 1, 1), ENGINE(5, 1, 1), EXIT(6, 1, 1)],
+    gaps: [gS(3, 1, 0), gS(4, 1, 0)],
   },
-  // 7. Build a Branch
+  // 5. Two lines join: 1 is closer, so it gets there first
   {
-    cols: 6, rows: 4,
-    pieces: [START(0, 1, 1), S(1, 1, 0), SW(2, 1, 3, 1, 2), S(3, 1, 0), S(4, 1, 0), END(5, 1, 3),
-      CAR(3, 3, 0, 'tank'), EXIT(5, 3, 1)],
-    gaps: [gS(2, 2, 1), gC(2, 3, 0), gS(4, 3, 0)],
+    cols: 8, rows: 4,
+    pieces: [CAR(1, 2, 1, 1), SW(3, 2, 1, 3, 0), CAR(1, 0, 1, 2), S(3, 1, 1), S(5, 2, 0), ENGINE(6, 2, 1), EXIT(7, 2, 1)],
+    gaps: [gS(2, 2, 0), gS(2, 0, 0), gC(3, 0, 2), gS(4, 2, 0)],
   },
-  // 8. Merging Lines
+  // 6. Three in a row
   {
-    cols: 6, rows: 4,
-    pieces: [START(0, 0, 1), CAR(2, 0, 0, 'coal'), SW(3, 1, 2, 0, 3), END(0, 1, 1), S(1, 1, 0), S(2, 1, 0),
-      CAR(3, 2, 1, 'passenger'), EXIT(5, 3, 1)],
-    gaps: [gS(1, 0, 0), gC(3, 0, 2), gC(3, 3, 0), gS(4, 3, 0)],
+    cols: 8, rows: 3,
+    pieces: [CAR(0, 1, 1, 3), CAR(1, 1, 1, 2), CAR(2, 1, 1, 1), S(4, 1, 0), ENGINE(6, 1, 1), EXIT(7, 1, 1)],
+    gaps: [gS(3, 1, 0), gS(5, 1, 0)],
   },
-  // 9. Little Loop
+  // 7. Slow down number 2: send it round the bend with the switch so 1 arrives first
   {
-    cols: 7, rows: 4,
-    pieces: [START(0, 2, 1), CAR(1, 2, 0, 'coal'), SW(2, 2, 3, 1, 0), S(3, 2, 0), SW(4, 2, 1, 3, 0),
-      CAR(3, 1, 0, 'passenger'), EXIT(6, 2, 1)],
-    gaps: [gC(2, 1, 1), gC(4, 1, 2), gS(5, 2, 0)],
-  },
-  // 10. Big Train Day
-  {
-    cols: 7, rows: 5,
-    pieces: [START(0, 0, 1), CAR(1, 0, 0, 'coal'), SW(3, 2, 0, 2, 1), CAR(3, 3, 1, 'tank'), END(3, 4, 0),
-      CAR(4, 2, 0, 'passenger'), EXIT(6, 2, 1)],
-    gaps: [gS(2, 0, 0), gC(3, 0, 2), gS(3, 1, 1), gS(5, 2, 0)],
-    spare: ['curve'],
+    cols: 10, rows: 5,
+    pieces: [CAR(0, 2, 1, 1), S(1, 2, 0), SW(5, 2, 1, 3, 2), S(6, 2, 0), S(7, 2, 0), ENGINE(8, 2, 1), EXIT(9, 2, 1),
+      CAR(1, 4, 1, 2), S(2, 4, 0), SW(3, 4, 3, 1, 0), SW(4, 4, 1, 3, 0), C(5, 4, 3), S(5, 3, 1),
+      C(3, 3, 1), C(4, 3, 2)],
+    gaps: [gS(2, 2, 0), gS(3, 2, 0), gS(4, 2, 0)],
   },
 ];
