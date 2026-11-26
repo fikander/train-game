@@ -59,13 +59,6 @@ export function makeTextures(scene: Phaser.Scene) {
     g.fillStyle(0x2f6fd1).fillRect(96, 26, 8, 58).fillRect(132, 26, 8, 58);
     // dome
     outlinedCircle(g, 116, 55, 11, 0xffc93c, 4);
-    // cute eyes on the smokebox front
-    for (const y of [42, 68]) {
-      g.fillStyle(INK).fillEllipse(166, y, 20, 18);
-      g.fillStyle(0xffffff).fillEllipse(166, y, 15, 13);
-      g.fillStyle(INK).fillCircle(169, y, 4.5);
-      g.fillStyle(0xffffff).fillCircle(170, y - 2, 1.6);
-    }
     // cab with blue roof
     outlinedRect(g, 10, 12, 62, E.h - 24, 10, 0x2f6fd1);
     g.fillStyle(0x6fa3f0).fillRoundedRect(18, 20, 46, 10, 5);

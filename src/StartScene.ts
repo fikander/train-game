@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { REF, VEH, drawRails, makeTextures } from './art';
 import { unlockAudio } from './audio';
-import { W, H, savedLevel } from './GameScene';
+import { W, H } from './GameScene';
 
 export class StartScene extends Phaser.Scene {
   constructor() { super('start'); }
@@ -66,7 +66,10 @@ export class StartScene extends Phaser.Scene {
       try { if (!this.scale.isFullscreen && !import.meta.env.DEV) this.scale.startFullscreen(); } catch { /* ignore */ }
       try { (screen.orientation as any)?.lock?.('landscape')?.catch?.(() => {}); } catch { /* ignore */ }
       this.cameras.main.fadeOut(350, 124, 200, 90);
-      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('game', { level: levelFromUrl() ?? savedLevel() }));
+      this.cameras.main.once('camerafadeoutcomplete', () => {
+        const lv = levelFromUrl();
+        if (lv !== null) this.scene.start('game', { level: lv }); else this.scene.start('map', {});
+      });
     };
     btn.on('pointerup', go);
   }
