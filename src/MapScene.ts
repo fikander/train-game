@@ -1,11 +1,13 @@
 import Phaser from 'phaser';
 import { REF, VEH, drawPiece, makeTextures } from './art';
-import { isMuted, setMuted, sfx } from './audio';
+import { sfx } from './audio';
 import { W, H } from './GameScene';
 import { BIOMES, LEVELS, PER_BIOME, biomeOf, type Biome } from './levels';
-import { hintsOn, isUnlocked, nextLevel, setHints, solvedLevels } from './progress';
+import { isUnlocked, nextLevel, solvedLevels } from './progress';
 import { DX, DY, Trail, cellPath, type Dir, type Piece } from './track';
 import { PAL, drawForest, drawGround, drawHill, drawPond, drawStream } from './terrain';
+import { drawGear } from './grownups';
+import { USE_3D, getWorld, type Station, type TerrainItem } from './three/World3D';
 
 const T = 120; // map track cell size in px
 const INK = 0x2d2a3e;
@@ -27,6 +29,13 @@ export class MapScene extends Phaser.Scene {
   private page = 0;
   private biome: Biome = 'meadow';
   boxPos: { x: number; y: number }[] = []; // by level index (only this page's are set)
+  // 3D map: the same pieces handed to the 3D layer instead of being drawn here
+  private grid3d = new Map<string, Piece>();
+  private terrain3d: TerrainItem[] = [];
+  private stations: Station[] = [];
+  private engine3d = { x: 0, y: 0, angle: 0, bob: 0, visible: false, k: 1, base: null as any };
+  private groundKey = '';
+  private get view() { return USE_3D ? getWorld(W, H) : null; }
 
   constructor() { super('map'); }
 
@@ -44,6 +53,10 @@ export class MapScene extends Phaser.Scene {
     this.biome = BIOMES[this.page];
     const first = this.page * PER_BIOME;
     const count = Math.min(PER_BIOME, LEVELS.length - first);
+    this.grid3d = new Map(); this.terrain3d = []; this.stations = [];
+    this.engine3d = { x: 0, y: 0, angle: 0, bob: 0, visible: false, k: 1, base: null };
+    // the same turned, tilted camera as the levels, aimed at the whole page
+    this.view?.frame(0.4 * T, 1.8 * T, 15.6 * T, 7.4 * T);
 
     this.drawGround();
     const boxes = this.layTrack(count);
@@ -56,7 +69,8 @@ export class MapScene extends Phaser.Scene {
 
     // the little engine waits just before the next level's box, if that is on this page
     const onPage = (i: number) => i >= first && i < first + count;
-    const parkD = (i: number) => this.boxD[i - first] - GAP;
+    // in 3D the engine stands right at the next level's stop
+    const parkD = (i: number) => this.boxD[i - first] - (USE_3D ? 0 : GAP);
     let endD: number | null = null;
     if (allDone && this.page === PAGES - 1) endD = this.boxD[count - 1] + GAP;
     else if (!allDone && onPage(target)) endD = parkD(target);
@@ -83,7 +97,23 @@ export class MapScene extends Phaser.Scene {
       }
     }
     this.drawPageArrows();
-    this.drawGrownUpGear();
+    drawGear(this, { busy: b => { this.busy = b; }, fade: this.fade() });
+    if (this.view) {
+      const world = this.view;
+      // keep trees off the line and the level pads
+      const clear = (q: { x: number; y: number }) =>
+        !this.stations.some(st => Math.hypot(st.x - q.x, st.y - q.y) < 1.5 * T) &&
+        !(q.x > -0.5 * T && q.x < 16.5 * T && (Math.abs(q.y - 3.5 * T) < 1 * T || Math.abs(q.y - 7.5 * T) < 1 * T)) &&
+        !(Math.abs(q.x - 15.5 * T) < 1 * T && q.y > 3 * T && q.y < 8 * T);
+      for (const t of this.terrain3d) if (t.kind === 'forest') t.pts = t.pts.filter(clear);
+      this.terrain3d = this.terrain3d.filter(t => t.kind !== 'forest' || t.pts.length);
+      world.build({
+        cell: T, ox: 0, oy: 0, biome: this.biome, grid: this.grid3d, tokens: [], engine: this.engine3d, movers: [],
+        markers: new Map(), terrain3d: this.terrain3d, groundKey: this.groundKey, textures: this.textures, extraTrack: [],
+        stations: this.stations,
+      });
+      this.events.once('shutdown', () => world.hide());
+    }
     this.cameras.main.fadeIn(350, ...this.fade());
     (window as any).__map = this;
   }
@@ -119,27 +149,32 @@ export class MapScene extends Phaser.Scene {
   }
 
   private drawGround() {
-    const key = `mapbg-${this.biome}`;
-    if (!this.textures.exists(key)) {
-      const g = this.make.graphics({}, false);
-      const rnd = new Phaser.Math.RandomDataGenerator([key]);
-      drawGround(g, this.biome, rnd, W, H);
-      // a stream (or a frozen one) wanders between the rows; ponds and clumps around the edges
-      const pts: { x: number; y: number }[] = [];
-      for (let x = -40; x <= 1800; x += 60) pts.push({ x, y: 660 + Math.sin(x / 230) * 30 });
-      if (this.biome !== 'desert') drawStream(g, pts, 40, this.biome);
-      else drawPond(g, [{ x: 960, y: 660 }, { x: 1080, y: 660 }], 120, rnd, 'desert');
-      const clumps: [number, number, number][] = [[160, 110, 4], [700, 70, 3], [1200, 100, 5], [1580, 80, 3],
-        [300, 1120, 4], [800, 1140, 3], [1250, 1110, 5], [1700, 1130, 4]];
-      for (const [x, y, n] of clumps) {
-        const cells = [{ x, y }];
-        for (let i = 1; i < n; i++) cells.push({ x: x + rnd.between(-110, 110), y: y + rnd.between(-30, 30) });
-        drawForest(g, cells, 110, rnd, this.biome);
-      }
-      g.generateTexture(key, W, H);
-      g.destroy();
+    const D3 = USE_3D;
+    const key = `mapbg-${this.biome}${D3 ? '-3d' : ''}`;
+    // in 3D the painted ground reaches half a screen past each edge, for the turned camera; trees are 3D models
+    const GX = D3 ? W / 2 : 0, GY = D3 ? H / 2 : 0;
+    const rnd = new Phaser.Math.RandomDataGenerator([key]);
+    const g = this.make.graphics({}, false);
+    drawGround(g, this.biome, rnd, W + GX * 2, H + GY * 2);
+    // a stream (or a frozen one) wanders between the rows; ponds and clumps around the edges
+    const pts: { x: number; y: number }[] = [];
+    for (let x = D3 ? -900 : -40; x <= (D3 ? 2800 : 1800); x += 60) pts.push({ x: x + GX, y: 660 + Math.sin(x / 230) * 30 + GY });
+    if (this.biome !== 'desert') drawStream(g, pts, 40, this.biome);
+    else drawPond(g, [{ x: 960 + GX, y: 660 + GY }, { x: 1080 + GX, y: 660 + GY }], 120, rnd, 'desert');
+    const clumps: [number, number, number][] = [[160, 110, 4], [700, 70, 3], [1200, 100, 5], [1580, 80, 3],
+      [300, 1120, 4], [800, 1140, 3], [1250, 1110, 5], [1700, 1130, 4]];
+    if (D3) clumps.push([-200, 300, 5], [-150, 900, 4], [2100, 500, 5], [2050, 1000, 4], [500, -150, 4], [1400, -120, 5], [900, 1350, 4]);
+    for (const [x, y, n] of clumps) {
+      const cells = [{ x, y }];
+      for (let i = 1; i < n; i++) cells.push({ x: x + rnd.between(-110, 110), y: y + rnd.between(-30, 30) });
+      if (D3) this.terrain3d.push({ kind: 'forest', pts: cells, s: 110 });
+      else drawForest(g, cells, 110, rnd, this.biome);
     }
-    this.add.image(0, 0, key).setOrigin(0).setDepth(0);
+    if (this.textures.exists(key)) this.textures.remove(key);
+    g.generateTexture(key, W + GX * 2, H + GY * 2);
+    g.destroy();
+    this.groundKey = key;
+    if (!D3) this.add.image(0, 0, key).setOrigin(0).setDepth(0);
   }
 
   /** Row 3 left to right, down the right side, row 7 right to left and on to the next page. Returns box centres in cells. */
@@ -155,11 +190,14 @@ export class MapScene extends Phaser.Scene {
     for (let y = 4; y <= 6; y++) { S(15, y, 1); add(15, y, 0, 2); }
     C(15, 7, 3); add(15, 7, 0, 3);
     for (let x = 14; x >= (last ? 1 : 0); x--) { S(x, 7, 0); add(x, 7, 1, 3); }
-    for (const p of pieces) {
+    if (USE_3D) {
+      for (const p of pieces) this.grid3d.set(`${p.x},${p.y}`, p);
+      if (last) this.grid3d.set('0,7', { type: 'end', x: 0, y: 7, rot: 1, fixed: true });
+    } else for (const p of pieces) {
       const g = this.add.graphics().setDepth(2).setPosition((p.x + 0.5) * T, (p.y + 0.5) * T);
       drawPiece(g, p, T);
     }
-    if (last) {
+    if (last && !USE_3D) {
       const b = this.add.graphics().setDepth(3).setPosition(1 * T + 14, 7.5 * T);
       b.fillStyle(INK).fillRoundedRect(-14, -46, 28, 92, 8).fillStyle(0xe8483f).fillRoundedRect(-9, -41, 18, 82, 6);
     }
@@ -179,82 +217,8 @@ export class MapScene extends Phaser.Scene {
     return boxes;
   }
 
-  /** Grown-ups: hold the little gear for 1.5 s for sound, track shadows and any level. */
-  private drawGrownUpGear() {
-    const c = this.add.container(1860, 64).setDepth(200).setAlpha(0.5);
-    const g = this.add.graphics();
-    g.fillStyle(INK).fillCircle(0, 0, 26);
-    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; g.fillCircle(Math.cos(a) * 26, Math.sin(a) * 26, 8); }
-    g.fillStyle(0xffffff).fillCircle(0, 0, 11);
-    const ring = this.add.graphics();
-    c.add([g, ring]);
-    c.setSize(90, 90).setInteractive();
-    let timer: Phaser.Time.TimerEvent | null = null;
-    let t0 = 0;
-    const cancel = () => { timer?.remove(); timer = null; ring.clear(); };
-    c.on('pointerdown', () => {
-      t0 = this.time.now;
-      timer = this.time.addEvent({
-        delay: 30, loop: true, callback: () => {
-          const f = (this.time.now - t0) / 1500;
-          ring.clear().lineStyle(8, 0xffffff).beginPath().arc(0, 0, 40, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2).strokePath();
-          if (f >= 1) { cancel(); this.openGrownUpPanel(); }
-        },
-      });
-    });
-    c.on('pointerup', cancel);
-    c.on('pointerout', cancel);
-  }
-
-  private openGrownUpPanel() {
-    this.busy = true;
-    const layer = this.add.container(0, 0).setDepth(500);
-    const bg = this.add.rectangle(W / 2, H / 2, W, H, 0x1c2b1a, 0.88).setInteractive();
-    layer.add(bg);
-    const font = 'Arial Rounded MT Bold, Arial, sans-serif';
-    // toggles
-    const toggle = (x: number, label: string, get: () => boolean, set: (v: boolean) => void) => {
-      const c = this.add.container(x, 170);
-      const g = this.add.graphics();
-      const t = this.add.text(0, 0, '', { fontFamily: font, fontSize: '40px', color: '#2d2a3e', fontStyle: 'bold' }).setOrigin(0.5);
-      const draw = () => {
-        const on = get();
-        g.clear().fillStyle(on ? 0x8ee06a : 0xcfd6cc).fillRoundedRect(-230, -60, 460, 120, 30);
-        t.setText(`${label}: ${on ? 'on' : 'off'}`);
-      };
-      draw();
-      c.add([g, t]);
-      c.setSize(460, 120).setInteractive();
-      c.on('pointerup', () => { set(!get()); sfx.boop(); draw(); });
-      layer.add(c);
-    };
-    toggle(W / 2 - 500, 'Sound', () => !isMuted(), v => setMuted(!v));
-    toggle(W / 2, 'Track shadows', hintsOn, setHints);
-    const close = this.add.text(W / 2 + 500, 170, '✕', { fontFamily: font, fontSize: '96px', color: '#ffffff' }).setOrigin(0.5).setInteractive();
-    close.on('pointerup', () => { layer.destroy(); this.busy = false; });
-    layer.add(close);
-    // every level, ten to a row (one row per biome)
-    const solved = solvedLevels();
-    LEVELS.forEach((_, i) => {
-      const b = biomeOf(i);
-      const x = W / 2 + ((i % PER_BIOME) - 4.5) * 150, y = 400 + Math.floor(i / PER_BIOME) * 170;
-      const c = this.add.container(x, y);
-      const g = this.add.graphics();
-      g.fillStyle(PAL[b].board).fillRoundedRect(-62, -62, 124, 124, 24);
-      g.lineStyle(6, PAL[b].lines).strokeRoundedRect(-62, -62, 124, 124, 24);
-      const t = this.add.text(0, 0, String(i + 1), { fontFamily: font, fontSize: '54px', color: '#2d2a3e', fontStyle: 'bold' }).setOrigin(0.5);
-      c.add([g, t]);
-      if (solved.has(i)) c.add(this.add.image(44, -44, 'star').setScale(0.26));
-      c.setSize(124, 124).setInteractive();
-      c.on('pointerup', () => {
-        this.cameras.main.fadeOut(300, ...this.fade());
-        this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('game', { level: i }));
-      });
-      layer.add(c);
-    });
-  }
-
   private drawBox(i: number, x: number, y: number, solved: boolean, open: boolean, isNext: boolean) {
+    if (this.view) return this.drawStation(i, x, y, solved, open, isNext);
     const c = this.add.container(x, y).setDepth(10);
     const g = this.add.graphics();
     g.fillStyle(0x000000, 0.18).fillRoundedRect(-BOX_W / 2 + 6, -BOX_H / 2 + 12, BOX_W, BOX_H, 34);
@@ -293,6 +257,30 @@ export class MapScene extends Phaser.Scene {
     return c;
   }
 
+  /** 3D map: a pad by the line with the level's number (no picture); an invisible zone over it takes the tap. */
+  private drawStation(i: number, x: number, y: number, solved: boolean, open: boolean, isNext: boolean) {
+    // pads sit on the outside of the loop: above the top row, below the bottom one
+    const side = y < 5 * T ? -1 : 1;
+    const py = y + side * 1.05 * T;
+    this.stations.push({ x, y: py, s: T, num: i + 1, state: solved ? 'solved' : open ? 'open' : 'locked', next: isNext });
+    const w = this.view!;
+    const at = w.toScreen(x, (py + y) / 2, 0.2 * T);
+    const zone = this.add.zone(at.x, at.y, 1.7 * T * w.k, 2.1 * T * w.k).setInteractive();
+    zone.on('pointerup', () => {
+      if (this.busy) return;
+      if (!open) { sfx.wobble(); return; }
+      this.busy = true;
+      sfx.boop();
+      this.cameras.main.fadeOut(300, ...this.fade());
+      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('game', { level: i }));
+    });
+    return zone;
+  }
+
+  update(time: number, delta: number) {
+    if (this.view) this.view.sync(this.game.canvas, time, Math.min(0.05, delta / 1000));
+  }
+
   /** A tiny picture of the level, with its engine and carriages. Solved levels show the track Alek built. */
   private thumbnail(i: number, solved: boolean, open: boolean) {
     const L = LEVELS[i];
@@ -328,6 +316,7 @@ export class MapScene extends Phaser.Scene {
   }
 
   private makeEngine() {
+    if (USE_3D) { this.engine3d.visible = true; return; }
     const k = T / REF * 0.6;
     const lift = VEH.engine.lift * T;
     this.engine = [
@@ -345,6 +334,7 @@ export class MapScene extends Phaser.Scene {
   private placeEngine(d: number) {
     // the trail is driven front first, so the engine faces the way it goes
     const p = this.trail.at(Math.max(0, Math.min(this.trail.length, d)));
+    if (USE_3D) { Object.assign(this.engine3d, { x: p.x * T, y: p.y * T, angle: p.angle }); return; }
     for (const img of this.engine) {
       const o = img.getData('off') as { x: number; y: number; f: number };
       img.setPosition(p.x * T + o.x + Math.cos(p.angle) * o.f, p.y * T + o.y + Math.sin(p.angle) * o.f).setRotation(p.angle);
