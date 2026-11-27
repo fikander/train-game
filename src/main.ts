@@ -3,12 +3,13 @@ import { GameScene, W, H } from './GameScene';
 import { StartScene } from './StartScene';
 import { MapScene } from './MapScene';
 
-new Phaser.Game({
+(window as any).__phaserGame = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
   width: W,
   height: H,
-  backgroundColor: '#7cc85a',
+  backgroundColor: 'rgba(0,0,0,0)',
+  transparent: true,
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
   input: { activePointers: 3 },
   render: { antialias: true, roundPixels: false },

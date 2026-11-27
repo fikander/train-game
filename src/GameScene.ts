@@ -8,6 +8,7 @@ import { PAL, drawForest, drawGround, drawHill, drawMeadow, drawPond, regions, t
 import { hintsOn } from './progress';
 import { CAR_L, ENG_L, SCALE, SPEED, TrainSim, fitRotation, junctionKeys, key, makeMover, type SimMover } from './sim';
 import { solvedLevels } from './progress';
+import { USE_3D, getWorld, type TerrainItem } from './three/World3D';
 
 export const W = 1920, H = 1200;
 const BOARD_TOP = 60, BOARD_BOTTOM = 950, TRAY_Y = 1080, TOKEN = 170;
@@ -35,10 +36,10 @@ class Vehicle {
   top: Phaser.GameObjects.Image;
   chimney?: Phaser.GameObjects.Image;
   label?: Phaser.GameObjects.Text;
-  x = 0; y = 0; angle = 0;
+  x = 0; y = 0; angle = 0; bob = 0; num = 0;
   private lift: number;
-  private k: number;
-  constructor(scene: Phaser.Scene, kind: string, cell: number) {
+  k: number;
+  constructor(scene: Phaser.Scene, public kind: string, cell: number) {
     this.k = cell / REF * SCALE;
     const isEngine = kind === 'engine';
     this.lift = (isEngine ? VEH.engine.lift : VEH.car.lift) * cell;
@@ -48,6 +49,7 @@ class Vehicle {
     if (isEngine) this.chimney = scene.add.image(0, 0, 'engine-chimney').setScale(this.k).setDepth(21);
   }
   setNumber(scene: Phaser.Scene, n: number) {
+    this.num = n;
     const fs = Math.round(70 * this.k);
     this.label = scene.add.text(0, 0, String(n), {
       fontFamily: 'Arial Black, Arial Rounded MT Bold, Arial, sans-serif', fontSize: `${fs}px`, color: '#ffffff', fontStyle: 'bold',
@@ -56,7 +58,7 @@ class Vehicle {
   }
   get parts(): Phaser.GameObjects.Components.Visible[] { return [this.shadow, this.base, this.top, ...(this.chimney ? [this.chimney] : []), ...(this.label ? [this.label] : [])]; }
   setPose(x: number, y: number, angle: number, bob = 0) {
-    this.x = x; this.y = y; this.angle = angle;
+    this.x = x; this.y = y; this.angle = angle; this.bob = bob;
     this.shadow.setPosition(x + this.lift * 0.5, y + this.lift * 0.6).setRotation(angle);
     this.base.setPosition(x, y).setRotation(angle);
     this.top.setPosition(x, y - this.lift + bob).setRotation(angle);
@@ -108,6 +110,10 @@ export class GameScene extends Phaser.Scene {
   private hand!: Phaser.GameObjects.Text;
   private goBtn!: Phaser.GameObjects.Container;
   private goPulse?: Phaser.Tweens.Tween;
+  // 3D board (see three/World3D.ts): what the terrain looks like and the track running off the board
+  terrain3d: TerrainItem[] = [];
+  extraTrack: Piece[] = [];
+  groundKey = '';
 
   constructor() { super('game'); }
 
@@ -118,6 +124,7 @@ export class GameScene extends Phaser.Scene {
     this.grid = new Map(); this.gaps = new Map(); this.pieceGfx = new Map(); this.markers = new Map();
     this.tokens = []; this.movers = []; this.blocked = new Set(); this.coupled = []; this.depart = null;
     this.mode = 'edit'; this.idle = 0; this.goPulse = undefined; this.leaving = false; this.celebrateOnce = false;
+    this.terrain3d = []; this.extraTrack = [];
   }
 
   create() {
@@ -162,7 +169,9 @@ export class GameScene extends Phaser.Scene {
         const sx = this.px(cx + 0.5), sy = this.py(cy + 0.5);
         if (sx < -this.cell || sx > W + this.cell || sy < -this.cell || sy > H + this.cell) break;
         const g = this.add.graphics().setDepth(2).setPosition(sx, sy);
-        drawPiece(g, { type: 'straight', x: cx, y: cy, rot: p.rot % 2 === 1 ? 0 : 1, fixed: true }, this.cell);
+        const piece: Piece = { type: 'straight', x: cx, y: cy, rot: p.rot % 2 === 1 ? 0 : 1, fixed: true };
+        drawPiece(g, piece, this.cell);
+        this.extraTrack.push(piece);
       }
     }
     this.drawTunnels();
@@ -175,7 +184,7 @@ export class GameScene extends Phaser.Scene {
     this.hand = this.add.text(0, 0, '👆', { fontSize: '120px' }).setOrigin(0.35, 0.05).setDepth(100).setVisible(false);
 
     this.setupInput();
-
+    if (USE_3D) this.start3D();
 
     this.cameras.main.fadeIn(400, ...PAL[this.biome].fade as [number, number, number]);
     this.time.delayedCall(500, () => {
@@ -187,6 +196,19 @@ export class GameScene extends Phaser.Scene {
       }
     });
     (window as any).__scene = this;
+  }
+
+  /** Hand the board over to the 3D layer: Phaser keeps only the tray, buttons and effects on top. */
+  private start3D() {
+    const world = getWorld(W, H);
+    world.build(this as any);
+    for (const o of this.children.list as any[]) {
+      if (o.getData?.('token')) continue;
+      if (o.depth >= 2 && o.depth < 50) o.setAlpha?.(0);
+    }
+    // smoke comes out of the 3D chimney instead
+    (this.smoke as any).emitParticleAt = (_x: number, _y: number, n = 1) => { world.puff(n); return undefined; };
+    this.events.once('shutdown', () => world.hide());
   }
 
   /** A hill over each tunnel mouth, drawn above the carriages so they disappear inside; each pair has its own colour. */
@@ -217,17 +239,25 @@ export class GameScene extends Phaser.Scene {
     g.lineStyle(3, P.lines, 0.35);
     for (let x = 0; x <= cols; x++) g.lineBetween(this.ox + x * s + rnd0.between(-2, 2), this.oy - 16, this.ox + x * s + rnd0.between(-2, 2), this.oy + rows * s + 16);
     for (let y = 0; y <= rows; y++) g.lineBetween(this.ox - 16, this.oy + y * s + rnd0.between(-2, 2), this.ox + cols * s + 16, this.oy + y * s + rnd0.between(-2, 2));
+    // in 3D the ground is painted on its own; the shelf and scenery are drawn separately
+    const shelf = USE_3D ? this.add.graphics().setDepth(0) : g;
     // tray shelf (only when there are pieces to place)
-    if (this.L.gaps.length + (this.L.spare?.length ?? 0) > 0) g.fillStyle(0x000000, 0.12)
+    if (this.L.gaps.length + (this.L.spare?.length ?? 0) > 0) shelf.fillStyle(0x000000, 0.12)
       .fillRoundedRect(40, 972, 1560, 216, 36)
       .fillStyle(0xd9a066).fillRoundedRect(40, 964, 1560, 216, 36)
       .fillStyle(0xe8b77f).fillRoundedRect(56, 978, 1528, 188, 28);
-    this.drawTerrain(g);
     const bgKey = `bg${this.li}`;
+    if (USE_3D) {
+      // the scenery is still worked out here (it decides which squares are blocked), but drawn in 3D
+      const scratch = this.make.graphics({}, false);
+      this.drawTerrain(scratch);
+      scratch.destroy();
+    } else this.drawTerrain(g);
     if (this.textures.exists(bgKey)) this.textures.remove(bgKey);
     g.generateTexture(bgKey, W, H);
     g.destroy();
-    this.add.image(0, 0, bgKey).setOrigin(0).setDepth(0);
+    this.groundKey = bgKey;
+    if (!USE_3D) this.add.image(0, 0, bgKey).setOrigin(0).setDepth(0);
   }
 
   /**
@@ -244,7 +274,7 @@ export class GameScene extends Phaser.Scene {
     // big open areas get a mix: one pond, some plain grass, and forest in the rest
     for (const r of regions(empty)) {
       if (r.length === 1) {
-        if (rnd.frac() < 0.6) drawMeadow(g, centre(r[0]), s, rnd, this.biome); else { drawForest(g, [centre(r[0])], s * 0.75, rnd, this.biome); this.blocked.add(key(r[0].x, r[0].y)); }
+        if (rnd.frac() < 0.6) { drawMeadow(g, centre(r[0]), s, rnd, this.biome); this.terrain3d.push({ kind: 'meadow', pt: centre(r[0]), s }); } else { drawForest(g, [centre(r[0])], s * 0.75, rnd, this.biome); this.terrain3d.push({ kind: 'forest', pts: [centre(r[0])], s: s * 0.75 }); this.blocked.add(key(r[0].x, r[0].y)); }
         continue;
       }
       let rest = r;
@@ -257,15 +287,16 @@ export class GameScene extends Phaser.Scene {
           pond.push(next);
         }
         drawPond(g, pond.map(centre), s, rnd, this.biome);
+        this.terrain3d.push({ kind: 'pond', pts: pond.map(centre), s });
         for (const c of pond) this.blocked.add(key(c.x, c.y));
         rest = r.filter(c => !pond.includes(c));
       }
       // plenty of open grass, so there is room to try other ways
       const grass = rest.filter(() => rnd.frac() < 0.45);
-      for (const c of grass) drawMeadow(g, centre(c), s, rnd, this.biome);
+      for (const c of grass) { drawMeadow(g, centre(c), s, rnd, this.biome); this.terrain3d.push({ kind: 'meadow', pt: centre(c), s }); }
       const trees = rest.filter(c => !grass.includes(c));
       for (const c of trees) this.blocked.add(key(c.x, c.y));
-      for (const f of regions(trees)) drawForest(g, f.map(centre), s * 0.9, rnd, this.biome);
+      for (const f of regions(trees)) { drawForest(g, f.map(centre), s * 0.9, rnd, this.biome); this.terrain3d.push({ kind: 'forest', pts: f.map(centre), s: s * 0.9 }); }
     }
     // around the board: a few forests in the margins, kept clear of buttons, tray and the line out
     const exitRows = this.L.pieces.filter(p => p.type === 'exit').map(p => this.py(p.y + 0.5));
@@ -283,6 +314,7 @@ export class GameScene extends Phaser.Scene {
         if (free(x, y)) clump.push({ x, y });
       }
       drawForest(g, clump, ms, rnd, this.biome);
+      this.terrain3d.push({ kind: 'forest', pts: clump, s: ms });
     }
   }
 
@@ -749,6 +781,7 @@ export class GameScene extends Phaser.Scene {
     if (this.depart && (this.mode === 'depart' || this.mode === 'done')) this.placeDeparting(time);
     else for (const m of this.movers) this.placeMover(m, m.state === 'move' ? Math.sin(time / 60 + m.num) * 1.5 : 0);
     this.puff(dt);
+    if (USE_3D) getWorld(W, H).sync(this.game.canvas, time, dt);
   }
 }
 
