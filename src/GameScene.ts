@@ -204,7 +204,8 @@ export class GameScene extends Phaser.Scene {
     world.build(this as any);
     for (const o of this.children.list as any[]) {
       if (o.getData?.('token')) continue;
-      if (o.depth >= 2 && o.depth < 50) o.setAlpha?.(0);
+      // not drawn by Phaser's camera any more, but still there (the 3D layer reads their poses, scale and alpha)
+      if (o.depth >= 2 && o.depth < 50) o.cameraFilter = this.cameras.main.id;
     }
     // smoke comes out of the 3D chimney instead
     (this.smoke as any).emitParticleAt = (_x: number, _y: number, n = 1) => { world.puff(n); return undefined; };

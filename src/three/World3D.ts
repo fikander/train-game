@@ -204,12 +204,6 @@ function switchMarker(p: Piece) {
   disc.position.set(m.x, 0.16, m.z);
   disc.rotation.y = yawOf(ang);
   g.add(disc);
-  // lever on the in-side
-  const ia = dirAngle(p.inDir!);
-  const lx = Math.cos(ia) * 0.3 + Math.cos(ia + Math.PI / 2) * 0.33;
-  const lz = Math.sin(ia) * 0.3 + Math.sin(ia + Math.PI / 2) * 0.33;
-  put(g, part(cylY(0.025, 0.025, 0.2, 10), 0x6b6f7a), lx, 0.1, lz);
-  put(g, part(sphere(0.07), p.state ? 0x3fbf6f : 0xe8483f), lx, 0.22, lz);
   return { g, disc };
 }
 
@@ -238,10 +232,11 @@ function buildPiece(p: Piece) {
       break;
     case 'switch': {
       if (p.junction) { rails(g, p.inDir!, p.out1!, true); rails(g, p.inDir!, p.out2!, true, undefined, 0.034); break; }
+      // both branches lie flat; the way the carriages will go has yellow rails
       const active = p.state ? p.out2! : p.out1!;
       const inactive = p.state ? p.out1! : p.out2!;
-      rails(g, p.inDir!, inactive, true, 0x9aa1a8, 0.022);
-      rails(g, p.inDir!, active, true, 0xffe066, 0.04, false);
+      rails(g, p.inDir!, inactive, true, 0xf4f4ef, 0.035);
+      rails(g, p.inDir!, active, true, 0xffd23f, 0.037);
       break;
     }
   }
@@ -497,6 +492,7 @@ function bake(group: THREE.Group) {
   const out = new THREE.Group();
   for (const b of buckets.values()) {
     const mesh = new THREE.Mesh(mergeGeometries(b.geos)!, b.mat);
+    mesh.geometry.userData.own = true;
     mesh.castShadow = b.cast; mesh.receiveShadow = b.recv;
     // outlines are drawn after the ink colour has been pushed out along the (now baked) normals
     mesh.matrixAutoUpdate = false;
@@ -601,9 +597,11 @@ class World {
     this.groundTex.anisotropy = 4;
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(this.W, this.H).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: this.groundTex }));
     ground.position.set(this.W / 2, 0, this.H / 2);
+    ground.geometry.userData.own = true;
     this.board.add(ground);
     const catcher = new THREE.Mesh(new THREE.PlaneGeometry(this.W * 1.2, this.H * 1.2).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({ color: 0x1d3d14, opacity: 0.22 }));
     catcher.position.set(this.W / 2, 2, this.H / 2);
+    catcher.geometry.userData.own = true;
     catcher.receiveShadow = true;
     this.board.add(catcher);
 
@@ -656,6 +654,8 @@ class World {
   }
 
   clear() {
+    // free what this level made for itself (shared, cached shapes stay)
+    this.board.traverse(o => { const g = (o as THREE.Mesh).geometry; if (g?.userData.own) g.dispose(); });
     this.root.remove(this.board);
     this.board = new THREE.Group();
     this.vehicles = []; this.tokens.clear(); this.switches = []; this.portals = []; this.puffs = [];
@@ -743,7 +743,9 @@ class World {
       v.g.visible = s.visible && !inHill;
       const k = s.k ?? 1;
       const sx = (s.base?.scaleX ?? k) / k, sy = (s.base?.scaleY ?? k) / k;
-      v.g.scale.set(cell * sx, cell * (2 - sx), cell * sy);
+      // when the 2D parts fade (quick reset after a crash), the 3D one shrinks away and pops back instead
+      const f = Math.max(0.001, s.base?.alpha ?? 1);
+      v.g.scale.set(cell * sx * f, cell * (2 - sx) * f, cell * sy * f);
     }
     void time;
   }
