@@ -11,7 +11,6 @@ import { solvedLevels } from './progress';
 
 export const W = 1920, H = 1200;
 const BOARD_TOP = 60, BOARD_BOTTOM = 950, TRAY_Y = 1080, TOKEN = 170;
-const REV_SPEED = 2.6;
 
 type Mode = 'edit' | 'run' | 'pause' | 'rewind' | 'depart' | 'done';
 
@@ -561,19 +560,55 @@ export class GameScene extends Phaser.Scene {
     sfx.boing();
     const pa = this.frontOf(a);
     const pb = b ? this.centreOf(b) : this.tailPoint();
-    const x = this.px((pa.x + pb.x) / 2), y = this.py((pa.y + pb.y) / 2);
-    this.starBurst(x, y);
-    this.sparkle(x, y);
+    this.starBurst(this.px((pa.x + pb.x) / 2), this.py((pa.y + pb.y) / 2));
     a.v.squash(this); b?.v.squash(this);
     if (!b) this.engine.squash(this);
-    this.time.delayedCall(1300, () => this.startRewind());
+    // everyone stays where they crashed, looking upset, then pops back to the start
+    this.distress(a.v);
+    if (b) this.distress(b.v);
+    this.time.delayedCall(1500, () => this.quickReset());
   }
 
-  private startRewind() {
+  private distressMarks: Phaser.GameObjects.Graphics[] = [];
+
+  /** Cartoon upset squiggles over a vehicle. */
+  private distress(v: Vehicle) {
+    const s = this.cell;
+    const g = this.add.graphics().setDepth(40).setPosition(v.x, v.y - s * 0.4);
+    for (const ang of [-0.55, 0, 0.55]) {
+      const pts: Phaser.Math.Vector2[] = [];
+      for (let i = 0; i <= 14; i++) {
+        const t = i / 14, r = s * (0.12 + t * 0.36), wig = Math.sin(t * Math.PI * 4) * s * 0.05;
+        const a = -Math.PI / 2 + ang;
+        pts.push(new Phaser.Math.Vector2(Math.cos(a) * r - Math.sin(a) * wig, Math.sin(a) * r + Math.cos(a) * wig));
+      }
+      g.lineStyle(s * 0.06, 0x2d2a3e).strokePoints(pts, false);
+    }
+    g.setScale(0.2);
+    this.tweens.add({ targets: g, scale: 1, duration: 160, ease: 'Back.Out' });
+    this.tweens.add({ targets: g, angle: { from: -8, to: 8 }, duration: 110, yoyo: true, repeat: -1 });
+    this.distressMarks.push(g);
+  }
+
+  /** Quick reset after a crash or getting stuck: fade out where they stand, reappear at the start. */
+  private quickReset() {
     this.mode = 'rewind';
     sfx.oops();
-    this.coupled.length = 0;
-    for (const m of this.movers) { m.state = 'rewind'; m.speed = 0; }
+    const parts = this.movers.flatMap(m => m.v.parts) as unknown as Phaser.GameObjects.Image[];
+    const base = parts.map(p => p.alpha);
+    const marks = this.distressMarks.splice(0);
+    const fade = (to: number, duration: number, done: () => void) => this.tweens.addCounter({
+      from: to ? 0 : 1, to, duration,
+      onUpdate: tw => { const k = tw.getValue() ?? 0; parts.forEach((p, i) => p.setAlpha(base[i] * k)); marks.forEach(g => g.setAlpha(k)); },
+      onComplete: done,
+    });
+    fade(0, 220, () => {
+      marks.forEach(g => g.destroy());
+      this.coupled.length = 0;
+      this.finishRewind();
+      this.mode = 'rewind';
+      fade(1, 260, () => { parts.forEach((p, i) => p.setAlpha(base[i])); this.mode = 'edit'; this.checkComplete(); });
+    });
   }
 
   private finishRewind() {
@@ -582,10 +617,10 @@ export class GameScene extends Phaser.Scene {
       m.trail.truncate(m.len0);
       m.pending = { ...m.start };
       m.state = 'idle';
+      m.speed = 0;
     }
     this.mode = 'edit';
     sfx.boop();
-    this.checkComplete();
   }
 
   private coupleOn(m: Mover) {
@@ -701,17 +736,9 @@ export class GameScene extends Phaser.Scene {
         // everyone has stopped but the train isn't complete: roll back and try again
         this.mode = 'pause';
         sfx.wobble();
-        this.time.delayedCall(900, () => this.startRewind());
+        for (const m of this.movers) if (m.state !== 'coupled') this.distress(m.v);
+        this.time.delayedCall(1300, () => this.quickReset());
       }
-    } else if (this.mode === 'rewind') {
-      let busy = false;
-      for (const m of this.movers) {
-        if (m.d <= m.d0) continue;
-        m.speed = Math.min(REV_SPEED, m.speed + 4 * dt);
-        m.d = Math.max(m.d0, m.d - m.speed * dt);
-        busy = true;
-      }
-      if (!busy) this.finishRewind();
     } else if (this.mode === 'depart' && this.depart) {
       this.depart.speed = Math.min(SPEED, this.depart.speed + 1.5 * dt);
       this.depart.d += this.depart.speed * dt;
@@ -720,7 +747,7 @@ export class GameScene extends Phaser.Scene {
       if (this.idle > 10) { this.idle = 0; this.showHint(); }
     }
     if (this.depart && (this.mode === 'depart' || this.mode === 'done')) this.placeDeparting(time);
-    else for (const m of this.movers) this.placeMover(m, m.state === 'move' || m.state === 'rewind' ? Math.sin(time / 60 + m.num) * 1.5 : 0);
+    else for (const m of this.movers) this.placeMover(m, m.state === 'move' ? Math.sin(time / 60 + m.num) * 1.5 : 0);
     this.puff(dt);
   }
 }

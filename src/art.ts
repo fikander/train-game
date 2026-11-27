@@ -192,13 +192,13 @@ function offsetLine(pts: Pt[], off: number): Phaser.Math.Vector2[] {
   });
 }
 
-export function drawRails(g: Phaser.GameObjects.Graphics, a: Dir, b: Dir, s: number, fixed: boolean, alpha = 1, railColor = 0xf4f4ef) {
+export function drawRails(g: Phaser.GameObjects.Graphics, a: Dir, b: Dir, s: number, fixed: boolean, alpha = 1, railColor = 0xf4f4ef, parts: 'all' | 'sleepers' | 'rails' = 'all') {
   const pts = toLocal(cellPath(0, 0, a, b, 16), s);
   const sleeperColor = fixed ? 0x9b6a3e : 0xc98a4b;
   const sleeperDark = INK;
   // sleepers
   const n = a === opp(b) ? 4 : 3;
-  for (let i = 0; i < n; i++) {
+  if (parts !== 'rails') for (let i = 0; i < n; i++) {
     const idx = Math.round(((i + 0.5) / n) * (pts.length - 1));
     const p = pts[idx], q = pts[Math.min(idx + 1, pts.length - 1)], r = pts[Math.max(idx - 1, 0)];
     const dx = q.x - r.x, dy = q.y - r.y, l = Math.hypot(dx, dy) || 1;
@@ -206,7 +206,7 @@ export function drawRails(g: Phaser.GameObjects.Graphics, a: Dir, b: Dir, s: num
     g.lineStyle(s * 0.14, sleeperDark, alpha).lineBetween(p.x - nx * half, p.y - ny * half, p.x + nx * half, p.y + ny * half);
     g.lineStyle(s * 0.09, sleeperColor, alpha).lineBetween(p.x - nx * half, p.y - ny * half, p.x + nx * half, p.y + ny * half);
   }
-  for (const off of [-0.16, 0.16]) {
+  if (parts !== 'sleepers') for (const off of [-0.16, 0.16]) {
     const line = offsetLine(pts, off * s);
     g.lineStyle(s * 0.085, INK, alpha).strokePoints(line, false);
     g.lineStyle(s * 0.05, railColor, alpha).strokePoints(line, false);
@@ -260,11 +260,18 @@ export function drawPiece(g: Phaser.GameObjects.Graphics, p: Piece, s: number) {
       break;
     }
     case 'switch': {
-      if (p.junction) { drawRails(g, p.inDir!, p.out1!, s, true); drawRails(g, p.inDir!, p.out2!, s, true); break; }
+      if (p.junction) {
+        for (const part of ['sleepers', 'rails'] as const) for (const o of [p.out1!, p.out2!]) drawRails(g, p.inDir!, o, s, true, 1, undefined, part);
+        break;
+      }
+      // both branches lie flat on the ground: all sleepers first, then all rails.
+      // The way the carriages will go has yellow rails; the other way is plain track. Neither looks 'wrong'.
       const active = p.state ? p.out2! : p.out1!;
       const inactive = p.state ? p.out1! : p.out2!;
-      drawRails(g, p.inDir!, inactive, s, true, 0.45, 0x8e969e);
-      drawRails(g, p.inDir!, active, s, true, 1, 0xffe066);
+      drawRails(g, p.inDir!, inactive, s, true, 1, undefined, 'sleepers');
+      drawRails(g, p.inDir!, active, s, true, 1, undefined, 'sleepers');
+      drawRails(g, p.inDir!, inactive, s, true, 1, 0xf4f4ef, 'rails');
+      drawRails(g, p.inDir!, active, s, true, 1, 0xffd23f, 'rails');
       break;
     }
   }
@@ -299,10 +306,4 @@ export function drawSwitchMarker(g: Phaser.GameObjects.Graphics, p: Piece, s: nu
   g.fillStyle(INK).fillCircle(x, y, s * 0.2);
   g.fillStyle(0xffd23f).fillCircle(x, y, s * 0.17);
   g.fillStyle(INK).fillPoints(tri, true);
-  // lever by the in-side
-  const ia = dirAngle(p.inDir!);
-  const lx = Math.cos(ia) * s * 0.3 + Math.cos(ia + Math.PI / 2) * s * 0.32;
-  const ly = Math.sin(ia) * s * 0.3 + Math.sin(ia + Math.PI / 2) * s * 0.32;
-  g.fillStyle(INK).fillCircle(lx, ly, s * 0.09);
-  g.fillStyle(p.state ? 0x3fbf6f : 0xe8483f).fillCircle(lx, ly, s * 0.065);
 }
