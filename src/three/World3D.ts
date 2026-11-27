@@ -490,7 +490,7 @@ function bake(group: THREE.Group) {
 }
 
 // ---------- outlines ----------
-/** Layer for numbers and stars: drawn after the outlines, so no ink line ever crosses them. */
+/** Layer for numbers, stars and smoke: drawn after the outlines, so no ink line ever crosses them. */
 const OVERLAY = 1;
 /**
  * Bold cartoon outlines drawn on screen, after the scene. A second pass draws only the surfaces' directions (normals)
@@ -712,8 +712,12 @@ class World {
     this.camera = new THREE.OrthographicCamera(0, W, 0, -H, 1, 30000);
     this.scene.add(this.root);
 
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0xb8c8a0, 1.9));
+    const hemi = new THREE.HemisphereLight(0xffffff, 0xb8c8a0, 1.9);
+    // lights shine on the last (overlay) pass too, so the smoke stays white
+    hemi.layers.enable(OVERLAY);
+    this.scene.add(hemi);
     this.sun = new THREE.DirectionalLight(0xffffff, 1.6);
+    this.sun.layers.enable(OVERLAY);
     const cx = W / 2, cz = H / 2;
     this.sun.position.set(cx - 900, 1600, cz - 500);
     this.sun.target.position.set(cx, 0, cz);
@@ -919,6 +923,8 @@ class World {
       const m = new THREE.Mesh(memo('puff', () => new THREE.IcosahedronGeometry(1, 2)), mat);
       m.position.set(e.g.position.x + Math.cos(a) * 0.3 * cell, 0.66 * cell, e.g.position.z + Math.sin(a) * 0.3 * cell);
       m.scale.setScalar(cell * 0.08);
+      // drawn with the numbers, after the outlines, so no ink line shows through the smoke
+      m.layers.set(OVERLAY);
       this.board.add(m);
       this.puffs.push({ m, t: 0, vx: (Math.random() - 0.5) * 30, vz: (Math.random() - 0.5) * 30 - 20 });
     }
