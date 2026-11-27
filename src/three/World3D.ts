@@ -6,7 +6,7 @@
 // points (and taps back into board points) through toScreen / fromScreen.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { DX, DY, cellPath, opp, sides, type Dir, type Piece } from '../track';
 import { PAL, TUNNEL_COLOURS } from '../terrain';
 import type { Biome } from '../levels';
@@ -27,7 +27,6 @@ export const look: Look = (() => {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }; } catch { return { ...DEFAULTS }; }
 })();
 export function saveLook() { try { localStorage.setItem(KEY, JSON.stringify(look)); } catch { /* ignore */ } }
-const inkScale = { value: look.ink };
 
 function bandData(n: number) {
   const d = new Uint8Array(n);
@@ -60,66 +59,16 @@ function basic(color: number) {
   if (!m) { m = new THREE.MeshBasicMaterial({ color }); basicCache.set(color, m); }
   return m;
 }
-const inkCache = new Map<string, THREE.ShaderMaterial>();
-/** Bold cartoon outline: the back faces, pushed out by `px` design pixels on screen. */
-function ink(color = INK, px = 5) {
-  const k = `${color}:${px}`;
-  let m = inkCache.get(k);
-  if (!m) {
-    m = new THREE.ShaderMaterial({
-      uniforms: { color: { value: new THREE.Color(color) }, px: { value: px }, inkScale },
-      vertexShader: `
-        uniform float px;
-        uniform float inkScale;
-        void main() {
-          float w = px * inkScale;
-          vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          vec3 n = normalize(normalMatrix * normal);
-          mv.xy += n.xy * w;
-          // and push it back, away from the camera: the outline then shows only around the edge of the whole
-          // object, never as dark spikes over a neighbouring part (wheels against the chassis, the dome on the boiler)
-          mv.z -= w * 4.0;
-          gl_Position = projectionMatrix * mv;
-        }`,
-      fragmentShader: `
-        uniform vec3 color;
-        void main() {
-          gl_FragColor = vec4(color, 1.0);
-          #include <colorspace_fragment>
-        }`,
-      side: THREE.BackSide,
-    });
-    inkCache.set(k, m);
-  }
-  return m;
-}
-const hullCache = new WeakMap<THREE.BufferGeometry, THREE.BufferGeometry>();
-/** The same shape with smooth normals, so the outline stays closed around sharp corners. */
-function hull(geo: THREE.BufferGeometry) {
-  let h = hullCache.get(geo);
-  if (!h) {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', geo.getAttribute('position').clone());
-    if (geo.index) g.setIndex(geo.index.clone());
-    h = mergeVertices(g, 1e-3);
-    h.computeVertexNormals();
-    hullCache.set(geo, h);
-  }
-  return h;
-}
-
 interface PartOpts { line?: number | false; inkColor?: number; cast?: boolean; flat?: boolean }
-/** One cartoon part: a toon-shaded mesh plus its outline. */
+/** One cartoon part: a toon-shaded mesh. */
 function part(geo: THREE.BufferGeometry, color: number, o: PartOpts = {}) {
   const g = new THREE.Group();
   const m = new THREE.Mesh(geo, o.flat ? basic(color) : toon(color));
   m.castShadow = o.cast ?? true;
   m.receiveShadow = !o.flat;
+  // outlines are drawn afterwards on screen from depth and normals (see Outline); small bits can opt out
+  if (o.line === false) m.userData.noInk = true;
   g.add(m);
-  if (o.line !== false) {
-    const h = new THREE.Mesh(hull(geo), ink(o.inkColor ?? INK, o.line ?? 5));
-    g.add(h);
-  }
   return g;
 }
 function put<T extends THREE.Object3D>(parent: THREE.Object3D, o: T, x: number, y: number, z: number): T {
@@ -269,10 +218,17 @@ function buildPiece(p: Piece) {
   return g;
 }
 
-// ---------- vehicles (cell units, facing +x, wheels on the ground) ----------
+// ---------- vehicles (cell units, facing +x, wheels standing on the rail tops) ----------
+/** top of the rails (see rails(): y0 0.035 + rail height 0.055) */
+const RAIL_TOP = 0.09;
+/** Models are drawn with the wheels touching y = wheelBottom; lift them so the wheels rest on the rails. */
+function onRails(g: THREE.Group, wheelBottom: number) {
+  for (const c of g.children) c.position.y += RAIL_TOP - wheelBottom;
+  return g;
+}
 function chassis(g: THREE.Group, body: number) {
   put(g, part(rbox(0.72, 0.06, 0.34, 0.02), 0x3a3646), 0, 0.13, 0);
-  for (const x of [-0.22, 0.22]) for (const z of [-0.17, 0.17]) {
+  for (const x of [-0.22, 0.22]) for (const z of [-0.16, 0.16]) {
     put(g, part(wheelGeo(0.075, 0.05), 0x3a3646), x, 0.08, z);
     put(g, part(wheelGeo(0.03, 0.055), 0xb9c2cc, { line: false }), x, 0.08, z);
   }
@@ -307,19 +263,19 @@ function buildCar(kind: string) {
     for (const x of [-0.13, 0.13]) put(g, part(cylX(0.185, 0.03), 0xd9930f, { line: 2 }), x, 0.37, 0);
     put(g, part(cylY(0.06, 0.07, 0.07), 0xffd966), 0, 0.57, 0);
   }
-  return g;
+  return onRails(g, 0.08 - 0.075);
 }
 
 function buildEngine() {
   const g = new THREE.Group();
   put(g, part(rbox(0.86, 0.07, 0.34, 0.02), 0x4a4a5a), 0, 0.14, 0);
-  for (const x of [-0.27, -0.03, 0.21]) for (const z of [-0.17, 0.17]) {
+  for (const x of [-0.27, -0.03, 0.21]) for (const z of [-0.16, 0.16]) {
     put(g, part(wheelGeo(0.1, 0.055), 0xe8483f), x, 0.1, z);
     put(g, part(wheelGeo(0.035, 0.06), 0xffffff, { line: false }), x, 0.1, z);
   }
   // white boiler with blue bands, dark smokebox at the front
   put(g, part(cylX(0.15, 0.48), 0xffffff), 0.1, 0.3, 0);
-  for (const x of [-0.02, 0.18]) put(g, part(cylX(0.155, 0.035), 0x2f6fd1, { line: 2 }), x, 0.3, 0);
+  for (const x of [-0.02, 0.18]) put(g, part(cylX(0.165, 0.035), 0x2f6fd1, { line: 2 }), x, 0.3, 0);
   put(g, part(cylX(0.153, 0.09), 0x4a4a5a), 0.37, 0.3, 0);
   // chimney + dome
   put(g, part(cylY(0.065, 0.045, 0.17), 0x6b6f7a), 0.3, 0.5, 0);
@@ -336,7 +292,7 @@ function buildEngine() {
     return new THREE.ExtrudeGeometry(s, { depth: 0.32, bevelEnabled: false }).translate(0, 0, -0.16);
   });
   put(g, part(cow, 0xe8483f), 0.41, 0.03, 0);
-  return g;
+  return onRails(g, 0.1 - 0.1);
 }
 
 const numberTex = new Map<number, THREE.Texture>();
@@ -355,7 +311,9 @@ function numberSprite(n: number) {
     t.colorSpace = THREE.SRGBColorSpace;
     numberTex.set(n, t);
   }
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true }));
+  // always drawn on top, so coal lumps or a roof never cut into the number
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false }));
+  s.renderOrder = 10;
   return s;
 }
 
@@ -461,6 +419,7 @@ function buildMeadow(root: THREE.Group, item: { pt: { x: number; y: number }; s:
   for (let i = 0; i < 7; i++) {
     const f = new THREE.Mesh(sphere(1), toon(PAL[b].flowers[Math.floor(rnd() * PAL[b].flowers.length)]));
     f.scale.setScalar(s * 0.03);
+    f.userData.noInk = true;
     f.position.set(item.pt.x + (rnd() * 0.7 - 0.35) * s, s * 0.02, item.pt.y + (rnd() * 0.7 - 0.35) * s);
     root.add(f);
   }
@@ -500,14 +459,15 @@ function buildPortal(p: Piece, b: Biome) {
  */
 function bake(group: THREE.Group) {
   group.updateMatrixWorld(true);
-  const buckets = new Map<string, { mat: THREE.Material; cast: boolean; recv: boolean; geos: THREE.BufferGeometry[] }>();
+  const buckets = new Map<string, { mat: THREE.Material; cast: boolean; recv: boolean; noInk: boolean; geos: THREE.BufferGeometry[] }>();
   group.traverse(o => {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
     const mat = m.material as THREE.Material;
-    const k = `${mat.uuid}:${m.castShadow}:${m.receiveShadow}`;
+    const noInk = !!m.userData.noInk;
+    const k = `${mat.uuid}:${m.castShadow}:${m.receiveShadow}:${noInk}`;
     let b = buckets.get(k);
-    if (!b) { b = { mat, cast: m.castShadow, recv: m.receiveShadow, geos: [] }; buckets.set(k, b); }
+    if (!b) { b = { mat, cast: m.castShadow, recv: m.receiveShadow, noInk, geos: [] }; buckets.set(k, b); }
     let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
     const clean = new THREE.BufferGeometry();
     clean.setAttribute('position', g.getAttribute('position'));
@@ -521,11 +481,112 @@ function bake(group: THREE.Group) {
     const mesh = new THREE.Mesh(mergeGeometries(b.geos)!, b.mat);
     mesh.geometry.userData.own = true;
     mesh.castShadow = b.cast; mesh.receiveShadow = b.recv;
-    // outlines are drawn after the ink colour has been pushed out along the (now baked) normals
+    if (b.noInk) mesh.userData.noInk = true;
     mesh.matrixAutoUpdate = false;
     out.add(mesh);
   }
   return out;
+}
+
+// ---------- outlines ----------
+/**
+ * Bold cartoon outlines drawn on screen, after the scene. A second pass draws only the surfaces' directions (normals)
+ * and depth; wherever depth jumps (a silhouette) or the surface turns sharply (a crease), the ink colour goes on top
+ * of the shaded picture. Unlike outline shells around each part, this can't leave broken bits of black where parts
+ * touch or overlap: the line is always where the picture itself has an edge.
+ */
+class Outline {
+  private color: THREE.WebGLRenderTarget;
+  private normals: THREE.WebGLRenderTarget;
+  private normalMat = new THREE.MeshNormalMaterial();
+  private quad: THREE.Mesh;
+  private quadScene = new THREE.Scene();
+  private quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  private mat: THREE.ShaderMaterial;
+  private hidden: THREE.Object3D[] = [];
+
+  constructor() {
+    this.color = new THREE.WebGLRenderTarget(1, 1, { samples: 4 });
+    this.normals = new THREE.WebGLRenderTarget(1, 1, { depthTexture: new THREE.DepthTexture(1, 1) });
+    this.normals.depthTexture!.type = THREE.UnsignedIntType;
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: {
+        tColor: { value: this.color.texture }, tNormal: { value: this.normals.texture }, tDepth: { value: this.normals.depthTexture },
+        texel: { value: new THREE.Vector2(1, 1) }, r: { value: 2 }, range: { value: 1 }, thr: { value: 4 },
+        ink: { value: new THREE.Color(INK) },
+      },
+      vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+      fragmentShader: `
+        uniform sampler2D tColor; uniform sampler2D tNormal; uniform sampler2D tDepth;
+        uniform vec2 texel; uniform float r; uniform float range; uniform float thr; uniform vec3 ink;
+        varying vec2 vUv;
+        float D(vec2 o) { return texture2D(tDepth, vUv + o * texel).x * range; }
+        vec3 N(vec2 o) { return texture2D(tNormal, vUv + o * texel).xyz * 2.0 - 1.0; }
+        float edgeAt(vec2 o, float dc) {
+          // depth: how far the middle is off the straight line between the two sides (flat or sloping ground: 0)
+          float dd = abs(D(o) + D(-o) - 2.0 * dc);
+          // crease: the two sides face different ways
+          float dn = 1.0 - dot(N(o), N(-o));
+          return max(smoothstep(thr * 0.6, thr, dd), smoothstep(0.5, 0.8, dn));
+        }
+        void main() {
+          float dc = D(vec2(0.0));
+          float e = 0.0;
+          for (int i = 0; i < 2; i++) {
+            float s = i == 0 ? r : max(1.0, r * 0.5);
+            e = max(e, edgeAt(vec2(s, 0.0), dc));
+            e = max(e, edgeAt(vec2(0.0, s), dc));
+            e = max(e, edgeAt(vec2(s, s) * 0.7071, dc));
+            e = max(e, edgeAt(vec2(s, -s) * 0.7071, dc));
+          }
+          vec4 c = texture2D(tColor, vUv);
+          gl_FragColor = vec4(mix(c.rgb, ink, e), 1.0);
+          #include <colorspace_fragment>
+        }`,
+      depthTest: false, depthWrite: false,
+    });
+    this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.mat);
+    this.quad.frustumCulled = false;
+    this.quadScene.add(this.quad);
+  }
+
+  render(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.OrthographicCamera, k: number) {
+    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+    const w = Math.max(1, size.x), h = Math.max(1, size.y);
+    if (this.color.width !== w || this.color.height !== h) { this.color.setSize(w, h); this.normals.setSize(w, h); }
+    const u = this.mat.uniforms;
+    u.texel.value.set(1 / w, 1 / h);
+    // line half-width in drawn pixels: the outline setting, in screen pixels, at this resolution
+    u.r.value = Math.max(1, look.ink * 0.9 * renderer.getPixelRatio());
+    u.range.value = camera.far - camera.near;
+    // a jump in depth counts as an edge from about 6 screen pixels' worth of height
+    u.thr.value = 6 / Math.max(0.05, k);
+
+    renderer.setRenderTarget(this.color);
+    renderer.render(scene, camera);
+
+    // the normals pass leaves out what shouldn't be outlined: numbers, smoke, the shadow layer, tiny bits
+    this.hidden.length = 0;
+    scene.traverseVisible(o => {
+      const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+      if ((o as THREE.Sprite).isSprite || o.userData.noInk || (m && (m.transparent || (m as THREE.ShadowMaterial).isShadowMaterial))) this.hidden.push(o);
+    });
+    for (const o of this.hidden) o.visible = false;
+    const bg = scene.background;
+    scene.background = null;
+    scene.overrideMaterial = this.normalMat;
+    const cc = renderer.getClearColor(new THREE.Color()), ca = renderer.getClearAlpha();
+    renderer.setClearColor(0x8080ff, 1);
+    renderer.setRenderTarget(this.normals);
+    renderer.render(scene, camera);
+    renderer.setClearColor(cc, ca);
+    scene.overrideMaterial = null;
+    scene.background = bg;
+    for (const o of this.hidden) o.visible = true;
+
+    renderer.setRenderTarget(null);
+    renderer.render(this.quadScene, this.quadCam);
+  }
 }
 
 // ---------- the world ----------
@@ -609,6 +670,7 @@ class World {
   private groundTex: THREE.CanvasTexture | null = null;
   private sun: THREE.DirectionalLight;
   private stations: { g: THREE.Group; st: Station }[] = [];
+  private outline = new Outline();
 
   constructor(public W: number, public H: number) {
     // kept after drawing, so the pixelated display can copy it (see display.ts)
@@ -644,8 +706,9 @@ class World {
   fit(canvas: HTMLCanvasElement) {
     const el = this.renderer.domElement;
     const r = canvas.getBoundingClientRect(), pr0 = (el.parentElement ?? document.body).getBoundingClientRect();
-    const pr = Math.min(2, window.devicePixelRatio || 1) / Math.max(1, look.pixel);
-    el.style.imageRendering = look.pixel > 1 ? 'pixelated' : '';
+    // always full resolution: the pixel look shrinks the finished picture (outlines included) in display.ts, so
+    // lines stay as thin and clean as without it
+    const pr = Math.min(2, window.devicePixelRatio || 1);
     if (this.renderer.getPixelRatio() !== pr) this.renderer.setPixelRatio(pr);
     const sz = this.renderer.getSize(new THREE.Vector2());
     if (Math.round(sz.x) !== Math.round(r.width) || Math.round(sz.y) !== Math.round(r.height)) this.renderer.setSize(r.width, r.height, false);
@@ -661,7 +724,6 @@ class World {
   /** Apply changed look settings (dev mode). Taps only line up with a moved camera after the level restarts. */
   applyLook() {
     saveLook();
-    inkScale.value = look.ink;
     const g = gradient();
     g.image = { data: bandData(look.bands), width: look.bands, height: 1 };
     g.needsUpdate = true;
@@ -790,7 +852,7 @@ class World {
         const sp = numberSprite(src.num);
         // big, so it still reads with chunky pixels
         sp.scale.set(0.52, 0.52, 1);
-        sp.position.set(0, 0.9, 0);
+        sp.position.set(0, 1.08, 0);
         g.add(sp);
       }
       this.board.add(g);
@@ -932,7 +994,7 @@ class World {
     // the next level's pad gently breathes
     for (const { g, st } of this.stations) if (st.next) g.scale.setScalar(st.s * (1 + Math.sin(time / 330) * 0.05));
     this.stepPuffs(dt);
-    this.renderer.render(this.scene, this.camera);
+    this.outline.render(this.renderer, this.scene, this.camera, this.k);
   }
 }
 
