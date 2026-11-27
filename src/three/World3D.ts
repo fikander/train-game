@@ -17,7 +17,7 @@ import type { Biome } from '../levels';
  * pixel: render at 1/pixel resolution with chunky pixels (1 = off); ink: outline width; shadow: shadow darkness;
  * bands: toon light steps.
  */
-export const DEFAULTS = { pitch: 55, yaw: -22, pixel: 1, ink: 1.4, shadow: 0.22, bands: 3 };
+export const DEFAULTS = { pitch: 55, yaw: -22, pixel: 6, ink: 1.4, shadow: 0.22, bands: 3 };
 export type Look = typeof DEFAULTS;
 export const look: Look = (() => {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('choo.look') ?? '{}') }; } catch { return { ...DEFAULTS }; }
@@ -173,7 +173,7 @@ function offsetPath(pts: { x: number; z: number }[], off: number) {
     return { x: p.x - dz / l * off, z: p.z + dx / l * off };
   });
 }
-const railGeo = (a: Dir, b: Dir, off: number, y0: number) => memo(`rail${a}${b}${off}${y0}`, () => sweep(offsetPath(localPath(a, b), off), 0.055, y0, y0 + 0.05));
+const railGeo = (a: Dir, b: Dir, off: number, y0: number) => memo(`rail${a}${b}${off}${y0}`, () => sweep(offsetPath(localPath(a, b), off), 0.075, y0, y0 + 0.055));
 const sleeperGeo = (a: Dir, b: Dir) => memo(`sl${a}${b}`, () => {
   const pts = localPath(a, b);
   const n = a === opp(b) ? 4 : 3;
@@ -280,27 +280,28 @@ function buildCar(kind: string) {
   const g = new THREE.Group();
   if (kind === 'coal') {
     chassis(g, 0);
-    put(g, part(rbox(0.7, 0.2, 0.42, 0.04), 0xe8483f), 0, 0.26, 0);
-    put(g, part(rbox(0.72, 0.03, 0.44, 0.012), 0xff7a7f, { line: 2 }), 0, 0.36, 0);
+    put(g, part(rbox(0.7, 0.32, 0.42, 0.04), 0xe8483f), 0, 0.32, 0);
+    put(g, part(rbox(0.72, 0.03, 0.44, 0.012), 0xff7a7f, { line: 2 }), 0, 0.48, 0);
     const lump = memo('coal', () => new THREE.DodecahedronGeometry(0.075).scale(1, 0.7, 1));
     let i = 0;
     for (const x of [-0.24, -0.12, 0, 0.12, 0.24]) for (const z of [-0.1, 0.06]) {
-      put(g, part(lump, 0x3a3946, { line: 2 }), x + (i % 2) * 0.03, 0.37 + (i * 7 % 3) * 0.012, z + ((i * 5) % 3) * 0.02);
+      put(g, part(lump, 0x3a3946, { line: 2 }), x + (i % 2) * 0.03, 0.5 + (i * 7 % 3) * 0.012, z + ((i * 5) % 3) * 0.02);
       i++;
     }
   } else if (kind === 'passenger') {
     chassis(g, 0);
-    put(g, part(rbox(0.72, 0.22, 0.42, 0.05), 0x3fbf6f), 0, 0.27, 0);
-    for (const z of [-0.211, 0.211]) for (const x of [-0.24, -0.08, 0.08, 0.24]) put(g, part(box(0.1, 0.08, 0.012), 0xcdeeff, { line: 2 }), x, 0.3, z);
-    put(g, part(rbox(0.77, 0.06, 0.47, 0.025), 0xfff3d6), 0, 0.41, 0);
-    for (const x of [-0.2, 0, 0.2]) put(g, part(rbox(0.09, 0.04, 0.12, 0.015), 0xd9c79a, { line: 2 }), x, 0.45, 0);
+    put(g, part(rbox(0.72, 0.32, 0.42, 0.05), 0x3fbf6f), 0, 0.32, 0);
+    for (const z of [-0.211, 0.211]) for (const x of [-0.24, -0.08, 0.08, 0.24]) put(g, part(box(0.1, 0.11, 0.012), 0xcdeeff, { line: 2 }), x, 0.37, z);
+    put(g, part(rbox(0.8, 0.06, 0.5, 0.025), 0xfff3d6), 0, 0.51, 0);
+    for (const x of [-0.2, 0, 0.2]) put(g, part(rbox(0.09, 0.04, 0.12, 0.015), 0xd9c79a, { line: 2 }), x, 0.55, 0);
   } else {
     // tank wagon
     chassis(g, 0);
     put(g, part(rbox(0.72, 0.04, 0.38, 0.015), 0x6b6f7a), 0, 0.17, 0);
-    put(g, part(capsuleX(0.15, 0.36), 0xffc93c), 0, 0.33, 0);
-    for (const x of [-0.13, 0.13]) put(g, part(cylX(0.155, 0.03), 0xd9930f, { line: 2 }), x, 0.33, 0);
-    put(g, part(cylY(0.06, 0.07, 0.07), 0xffd966), 0, 0.5, 0);
+    for (const x of [-0.2, 0.2]) put(g, part(rbox(0.06, 0.1, 0.3, 0.015), 0x6b6f7a), x, 0.22, 0);
+    put(g, part(capsuleX(0.18, 0.34), 0xffc93c), 0, 0.37, 0);
+    for (const x of [-0.13, 0.13]) put(g, part(cylX(0.185, 0.03), 0xd9930f, { line: 2 }), x, 0.37, 0);
+    put(g, part(cylY(0.06, 0.07, 0.07), 0xffd966), 0, 0.57, 0);
   }
   return g;
 }
@@ -343,7 +344,7 @@ function numberSprite(n: number) {
     const x = c.getContext('2d')!;
     x.font = '900 96px Arial Black, Arial Rounded MT Bold, Arial, sans-serif';
     x.textAlign = 'center'; x.textBaseline = 'middle';
-    x.lineJoin = 'round'; x.lineWidth = 22; x.strokeStyle = '#2d2a3e';
+    x.lineJoin = 'round'; x.lineWidth = 18; x.strokeStyle = '#2d2a3e';
     x.strokeText(String(n), 64, 70);
     x.fillStyle = '#ffffff'; x.fillText(String(n), 64, 70);
     t = new THREE.CanvasTexture(c);
@@ -539,6 +540,53 @@ export interface BoardScene {
   groundKey: string;
   textures: any;
   extraTrack: Piece[];
+  /** level map only: the level stops along the line */
+  stations?: Station[];
+}
+
+/** A level on the map: a raised pad by the line with its number; x, y = centre in design px, s = map square size. */
+export interface Station { x: number; y: number; s: number; num: number; state: 'solved' | 'open' | 'locked'; next: boolean }
+
+let starTex: THREE.Texture | null = null;
+function starSprite() {
+  if (!starTex) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const x = c.getContext('2d')!;
+    x.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? 24 : 58, a = -Math.PI / 2 + i * Math.PI / 5;
+      x.lineTo(64 + Math.cos(a) * r, 66 + Math.sin(a) * r);
+    }
+    x.closePath();
+    x.lineJoin = 'round'; x.lineWidth = 12; x.strokeStyle = '#2d2a3e'; x.stroke();
+    x.fillStyle = '#ffd23f'; x.fill();
+    starTex = new THREE.CanvasTexture(c);
+    starTex.colorSpace = THREE.SRGBColorSpace;
+  }
+  return new THREE.Sprite(new THREE.SpriteMaterial({ map: starTex, transparent: true }));
+}
+
+function buildStation(st: Station) {
+  const g = new THREE.Group();
+  const col = st.state === 'locked' ? 0xc9d1c4 : st.next ? 0xffd23f : st.state === 'solved' ? 0xfff1b8 : 0xffffff;
+  // the pad, a little signpost and the number floating over it
+  put(g, part(rbox(1.5, 0.16, 1.0, 0.08), col), 0, 0.08, 0);
+  put(g, part(rbox(1.62, 0.06, 1.12, 0.03), 0x9b6a3e), 0, 0.03, 0);
+  const n = numberSprite(st.num);
+  n.scale.set(0.95, 0.95, 1);
+  n.position.set(0, 0.75, 0);
+  if (st.state === 'locked') n.material.opacity = 0.55;
+  g.add(n);
+  if (st.state === 'solved') {
+    const star = starSprite();
+    star.scale.set(0.6, 0.6, 1);
+    star.position.set(0.55, 1.0, 0);
+    g.add(star);
+  }
+  g.position.set(st.x, 0, st.y);
+  g.scale.setScalar(st.s);
+  return g;
 }
 
 class World {
@@ -556,17 +604,20 @@ class World {
   private puffs: Puff[] = [];
   private groundTex: THREE.CanvasTexture | null = null;
   private sun: THREE.DirectionalLight;
+  private stations: { g: THREE.Group; st: Station }[] = [];
 
   constructor(public W: number, public H: number) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    // kept after drawing, so the pixelated display can copy it (see display.ts)
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     const el = this.renderer.domElement;
-    el.style.position = 'fixed';
+    el.style.position = 'absolute';
     el.style.zIndex = '0';
     el.style.pointerEvents = 'none';
     el.style.display = 'none';
-    document.body.prepend(el);
+    // inside the game's own box, so it comes along into fullscreen (Phaser makes #game the fullscreen element)
+    (document.getElementById('game') ?? document.body).prepend(el);
 
     this.camera = new THREE.OrthographicCamera(0, W, 0, -H, 1, 30000);
     this.scene.add(this.root);
@@ -587,14 +638,14 @@ class World {
 
   /** Keep our canvas exactly under Phaser's, at the screen's real resolution. */
   fit(canvas: HTMLCanvasElement) {
-    const r = canvas.getBoundingClientRect();
     const el = this.renderer.domElement;
+    const r = canvas.getBoundingClientRect(), pr0 = (el.parentElement ?? document.body).getBoundingClientRect();
     const pr = Math.min(2, window.devicePixelRatio || 1) / Math.max(1, look.pixel);
     el.style.imageRendering = look.pixel > 1 ? 'pixelated' : '';
     if (this.renderer.getPixelRatio() !== pr) this.renderer.setPixelRatio(pr);
     const sz = this.renderer.getSize(new THREE.Vector2());
     if (Math.round(sz.x) !== Math.round(r.width) || Math.round(sz.y) !== Math.round(r.height)) this.renderer.setSize(r.width, r.height, false);
-    el.style.left = `${r.left}px`; el.style.top = `${r.top}px`;
+    el.style.left = `${r.left - pr0.left}px`; el.style.top = `${r.top - pr0.top}px`;
     el.style.width = `${r.width}px`; el.style.height = `${r.height}px`;
   }
 
@@ -721,14 +772,21 @@ class World {
     }
 
     this.board.add(bake(statics));
+    this.stations = [];
+    for (const st of S.stations ?? []) {
+      const g = buildStation(st);
+      this.board.add(g);
+      this.stations.push({ g, st });
+    }
 
     // vehicles
     const add = (src: any, kind: string) => {
       const g = kind === 'engine' ? buildEngine() : buildCar(kind);
       if (src.num) {
         const sp = numberSprite(src.num);
-        sp.scale.set(0.36, 0.36, 1);
-        sp.position.set(0, 0.72, 0);
+        // big, so it still reads with chunky pixels
+        sp.scale.set(0.52, 0.52, 1);
+        sp.position.set(0, 0.9, 0);
         g.add(sp);
       }
       this.board.add(g);
@@ -745,7 +803,7 @@ class World {
     this.board.traverse(o => { const g = (o as THREE.Mesh).geometry; if (g?.userData.own) g.dispose(); });
     this.root.remove(this.board);
     this.board = new THREE.Group();
-    this.vehicles = []; this.tokens.clear(); this.switches = []; this.portals = []; this.puffs = [];
+    this.vehicles = []; this.tokens.clear(); this.switches = []; this.portals = []; this.puffs = []; this.stations = [];
     this.groundTex?.dispose(); this.groundTex = null;
   }
 
@@ -867,12 +925,16 @@ class World {
       v.g.scale.set(this.S.cell * sc, this.S.cell * sc, this.S.cell * sc);
     }
     this.syncVehicles(time);
+    // the next level's pad gently breathes
+    for (const { g, st } of this.stations) if (st.next) g.scale.setScalar(st.s * (1 + Math.sin(time / 330) * 0.05));
     this.stepPuffs(dt);
     this.renderer.render(this.scene, this.camera);
   }
 }
 
 let world: World | null = null;
+/** the 3D layer if it was ever made (without making it) */
+export const peekWorld = () => world;
 export function getWorld(W: number, H: number) {
   if (!world) {
     world = new World(W, H);
@@ -883,6 +945,8 @@ export function getWorld(W: number, H: number) {
         const game = (window as any).__phaserGame;
         const sc = game?.scene.getScene('game');
         if (sc?.scene.isActive()) sc.scene.restart({ level: sc.li });
+        const map = game?.scene.getScene('map');
+        if (map?.scene.isActive()) map.scene.restart({ page: map.page });
       }));
     }
   }
