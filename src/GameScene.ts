@@ -134,6 +134,8 @@ export class GameScene extends Phaser.Scene {
     this.cell = Math.floor(Math.min(1580 / L.cols, (BOARD_BOTTOM - BOARD_TOP) / L.rows, 230));
     this.ox = Math.round((W - L.cols * this.cell) / 2);
     this.oy = Math.round(BOARD_TOP + (BOARD_BOTTOM - BOARD_TOP - L.rows * this.cell) / 2);
+    // in 3D the camera is aimed first: everything on screen over the board goes through it
+    this.view?.frame(this.ox, this.oy, L.cols * this.cell, L.rows * this.cell);
 
     for (const p of L.pieces) this.grid.set(key(p.x, p.y), { ...p });
     for (const p of this.grid.values()) if (p.type === 'car') p.buffer = !this.grid.has(key(p.x - DX[p.rot], p.y - DY[p.rot]));
@@ -167,7 +169,8 @@ export class GameScene extends Phaser.Scene {
       for (let i = 1; i < 30; i++) {
         const cx = p.x + DX[p.rot] * i, cy = p.y + DY[p.rot] * i;
         const sx = this.px(cx + 0.5), sy = this.py(cy + 0.5);
-        if (sx < -this.cell || sx > W + this.cell || sy < -this.cell || sy > H + this.cell) break;
+        const on = this.scr(sx, sy);
+        if (on.x < -this.cell || on.x > W + this.cell || on.y < -this.cell || on.y > H + this.cell) break;
         const g = this.add.graphics().setDepth(2).setPosition(sx, sy);
         const piece: Piece = { type: 'straight', x: cx, y: cy, rot: p.rot % 2 === 1 ? 0 : 1, fixed: true };
         drawPiece(g, piece, this.cell);
@@ -181,7 +184,7 @@ export class GameScene extends Phaser.Scene {
       drawPiece(g, { type: gp.type, x: 0, y: 0, rot: gp.rot, fixed: true }, this.cell);
     }
 
-    this.hand = this.add.text(0, 0, '👆', { fontSize: '120px' }).setOrigin(0.35, 0.05).setDepth(100).setVisible(false);
+    this.hand = this.add.text(0, 0, '👆', { fontSize: '120px', padding: { top: 40, bottom: 10, left: 10, right: 10 } }).setOrigin(0.36, 0.2).setDepth(100).setVisible(false);
 
     this.setupInput();
     if (USE_3D) this.start3D();
@@ -205,7 +208,7 @@ export class GameScene extends Phaser.Scene {
     for (const o of this.children.list as any[]) {
       if (o.getData?.('token')) continue;
       // not drawn by Phaser's camera any more, but still there (the 3D layer reads their poses, scale and alpha)
-      if (o.depth >= 2 && o.depth < 50) o.cameraFilter = this.cameras.main.id;
+      if (o.depth >= 1 && o.depth < 50) o.cameraFilter = this.cameras.main.id;
     }
     // smoke comes out of the 3D chimney instead
     (this.smoke as any).emitParticleAt = (_x: number, _y: number, n = 1) => { world.puff(n); return undefined; };
@@ -223,6 +226,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ---------- coordinates ----------
+  /** The 3D layer, when it is on. Game logic stays in flat board coordinates (design px); the camera turns them. */
+  private get view() { return USE_3D ? getWorld(W, H) : null; }
+  /** Where a board point (design px) shows on screen; h = height above the ground, in squares. */
+  private scr(x: number, y: number, h = 0) { const w = this.view; return w ? w.toScreen(x, y, h * this.cell) : { x, y: y - h * this.cell }; }
+  /** How big a square looks on screen. */
+  private get scell() { const w = this.view; return w ? this.cell * w.k : this.cell; }
+
   private px(u: number) { return this.ox + u * this.cell; }
   private py(v: number) { return this.oy + v * this.cell; }
 
@@ -234,12 +244,14 @@ export class GameScene extends Phaser.Scene {
     const rnd0 = new Phaser.Math.RandomDataGenerator([`ground${this.li}`]);
     // textured grass: soft mottled patches + speckles
     const P = PAL[this.biome];
-    drawGround(g, this.biome, rnd0, W, H);
+    // the turned 3D camera sees past the screen's edges, so its ground reaches half a screen further each way
+    const GX = USE_3D ? W / 2 : 0, GY = USE_3D ? H / 2 : 0, ox = this.ox + GX, oy = this.oy + GY;
+    drawGround(g, this.biome, rnd0, W + GX * 2, H + GY * 2);
     // the play area: slightly lighter, with thin hand-drawn grid lines
-    g.fillStyle(P.board, 0.45).fillRoundedRect(this.ox - 10, this.oy - 10, cols * s + 20, rows * s + 20, 24);
+    g.fillStyle(P.board, 0.45).fillRoundedRect(ox - 10, oy - 10, cols * s + 20, rows * s + 20, 24);
     g.lineStyle(3, P.lines, 0.35);
-    for (let x = 0; x <= cols; x++) g.lineBetween(this.ox + x * s + rnd0.between(-2, 2), this.oy - 16, this.ox + x * s + rnd0.between(-2, 2), this.oy + rows * s + 16);
-    for (let y = 0; y <= rows; y++) g.lineBetween(this.ox - 16, this.oy + y * s + rnd0.between(-2, 2), this.ox + cols * s + 16, this.oy + y * s + rnd0.between(-2, 2));
+    for (let x = 0; x <= cols; x++) g.lineBetween(ox + x * s + rnd0.between(-2, 2), oy - 16, ox + x * s + rnd0.between(-2, 2), oy + rows * s + 16);
+    for (let y = 0; y <= rows; y++) g.lineBetween(ox - 16, oy + y * s + rnd0.between(-2, 2), ox + cols * s + 16, oy + y * s + rnd0.between(-2, 2));
     // in 3D the ground is painted on its own; the shelf and scenery are drawn separately
     const shelf = USE_3D ? this.add.graphics().setDepth(0) : g;
     // tray shelf (only when there are pieces to place)
@@ -255,7 +267,7 @@ export class GameScene extends Phaser.Scene {
       scratch.destroy();
     } else this.drawTerrain(g);
     if (this.textures.exists(bgKey)) this.textures.remove(bgKey);
-    g.generateTexture(bgKey, W, H);
+    g.generateTexture(bgKey, W + GX * 2, H + GY * 2);
     g.destroy();
     this.groundKey = bgKey;
     if (!USE_3D) this.add.image(0, 0, bgKey).setOrigin(0).setDepth(0);
@@ -301,13 +313,16 @@ export class GameScene extends Phaser.Scene {
     }
     // around the board: a few forests in the margins, kept clear of buttons, tray and the line out
     const exitRows = this.L.pieces.filter(p => p.type === 'exit').map(p => this.py(p.y + 0.5));
-    const free = (x: number, y: number) =>
-      !(x > this.ox - s * 0.6 && x < this.ox + cols * s + s * 0.6 && y > this.oy - s * 0.6 && y < this.oy + rows * s + s * 0.6) &&
-      !(y > 930) && !(x < 220 && y < 200) && !(x > 1780 && y < 120) && !(y < 70 && Math.abs(x - W / 2) < 260) &&
-      !exitRows.some(ey => Math.abs(y - ey) < s * 0.8 && x > this.ox + cols * s - s);
+    const free = (x: number, y: number) => {
+      if (x > this.ox - s * 0.6 && x < this.ox + cols * s + s * 0.6 && y > this.oy - s * 0.6 && y < this.oy + rows * s + s * 0.6) return false;
+      if (exitRows.some(ey => Math.abs(y - ey) < s * 0.8 && x > this.ox + cols * s - s)) return false;
+      const q = this.scr(x, y); // buttons and tray are on the screen, wherever the camera points
+      return !(q.y > 930) && !(q.x < 220 && q.y < 200) && !(q.x > 1780 && q.y < 120) && !(q.y < 70 && Math.abs(q.x - W / 2) < 260) &&
+        (!USE_3D || (q.x > -150 && q.x < W + 150 && q.y > -150));
+    };
     const ms = Math.min(s, 150);
-    for (let i = 0; i < 9; i++) {
-      let x = rnd.between(0, W), y = rnd.between(0, 930);
+    for (let i = 0; i < (USE_3D ? 30 : 9); i++) {
+      let x = USE_3D ? rnd.between(-W / 2, W * 1.5) : rnd.between(0, W), y = USE_3D ? rnd.between(-H / 2, H * 1.5) : rnd.between(0, 930);
       if (!free(x, y)) continue;
       const clump: Cell[] = [{ x, y }];
       for (let j = 0; j < rnd.between(2, 5); j++) {
@@ -328,7 +343,8 @@ export class GameScene extends Phaser.Scene {
       const m = this.add.graphics().setDepth(3).setPosition(g.x, g.y);
       drawSwitchMarker(m, p, this.cell);
       this.markers.set(k, m);
-      const zone = this.add.zone(g.x, g.y, this.cell, this.cell).setInteractive();
+      const zp = this.scr(g.x, g.y);
+      const zone = this.add.zone(zp.x, zp.y, this.scell, this.scell).setInteractive();
       zone.on('pointerdown', () => this.flipSwitch(p));
     }
     if (p.type === 'car' && p.car) {
@@ -420,7 +436,7 @@ export class GameScene extends Phaser.Scene {
       obj.setDepth(90);
       const bg = obj.getData('bg') as Phaser.GameObjects.Graphics;
       bg.setVisible(false);
-      this.tweens.add({ targets: obj, scale: this.cell / TOKEN * 1.08, duration: 120 });
+      this.tweens.add({ targets: obj, scale: this.scell / TOKEN * 1.08, duration: 120 });
       sfx.boop();
     });
     this.input.on('drag', (_p: Phaser.Input.Pointer, obj: Phaser.GameObjects.Container, x: number, y: number) => {
@@ -445,6 +461,7 @@ export class GameScene extends Phaser.Scene {
 
   /** The board square under the pointer, if a piece may go there (open grass or a gap, not already taken). */
   private dropSquare(px: number, py: number, t: Token): { x: number; y: number; ok: boolean } | null {
+    if (this.view) ({ x: px, y: py } = this.view.fromScreen(px, py));
     const x = Math.floor((px - this.ox) / this.cell), y = Math.floor((py - this.oy) / this.cell);
     if (x < 0 || y < 0 || x >= this.L.cols || y >= this.L.rows) return null;
     const k = key(x, y);
@@ -464,12 +481,12 @@ export class GameScene extends Phaser.Scene {
       this.grid.set(k, { type: t.type, x: sq.x, y: sq.y, rot: t.rot, fixed: false });
       drawPiece(t.g, { type: t.type, x: 0, y: 0, rot: t.rot, fixed: false }, TOKEN);
       c.setDepth(10);
-      const tx = this.px(sq.x + 0.5), ty = this.py(sq.y + 0.5);
+      const { x: tx, y: ty } = this.scr(this.px(sq.x + 0.5), this.py(sq.y + 0.5));
       this.tweens.add({
-        targets: c, x: tx, y: ty, scale: this.cell / TOKEN, duration: 140, ease: 'Back.Out',
+        targets: c, x: tx, y: ty, scale: this.scell / TOKEN, duration: 140, ease: 'Back.Out',
         onComplete: () => {
           sfx.clack();
-          this.tweens.add({ targets: c, scale: this.cell / TOKEN * 1.08, duration: 90, yoyo: true });
+          this.tweens.add({ targets: c, scale: this.scell / TOKEN * 1.08, duration: 90, yoyo: true });
           this.sparkle(tx, ty);
           this.checkComplete();
         },
@@ -479,7 +496,7 @@ export class GameScene extends Phaser.Scene {
     if (sq && this.blocked.has(key(sq.x, sq.y))) {
       // trees or water: wobble over the square, then slide home
       sfx.wobble();
-      const tx = this.px(sq.x + 0.5), ty = this.py(sq.y + 0.5);
+      const { x: tx, y: ty } = this.scr(this.px(sq.x + 0.5), this.py(sq.y + 0.5));
       this.tweens.chain({
         targets: c, tweens: [
           { x: tx, y: ty, duration: 120 },
@@ -545,7 +562,7 @@ export class GameScene extends Phaser.Scene {
     for (const g of this.gaps.values()) {
       const k = key(g.x, g.y);
       const p = this.grid.get(k);
-      const cx = this.px(g.x + 0.5), cy = this.py(g.y + 0.5);
+      const { x: cx, y: cy } = this.scr(this.px(g.x + 0.5), this.py(g.y + 0.5));
       if (p && p.type === g.type && sameSides(p, g)) continue;
       if (p) { // placed but turned the wrong way: tap it
         this.hand.setPosition(cx, cy).setVisible(true).setAlpha(1);
@@ -593,7 +610,8 @@ export class GameScene extends Phaser.Scene {
     sfx.boing();
     const pa = this.frontOf(a);
     const pb = b ? this.centreOf(b) : this.tailPoint();
-    this.starBurst(this.px((pa.x + pb.x) / 2), this.py((pa.y + pb.y) / 2));
+    const at = this.scr(this.px((pa.x + pb.x) / 2), this.py((pa.y + pb.y) / 2), 0.2);
+    this.starBurst(at.x, at.y);
     a.v.squash(this); b?.v.squash(this);
     if (!b) this.engine.squash(this);
     // everyone stays where they crashed, looking upset, then pops back to the start
@@ -606,8 +624,9 @@ export class GameScene extends Phaser.Scene {
 
   /** Cartoon upset squiggles over a vehicle. */
   private distress(v: Vehicle) {
-    const s = this.cell;
-    const g = this.add.graphics().setDepth(40).setPosition(v.x, v.y - s * 0.4);
+    const s = this.scell;
+    const at = this.scr(v.x, v.y, 0.4);
+    const g = this.add.graphics().setDepth(40).setPosition(at.x, at.y);
     for (const ang of [-0.55, 0, 0.55]) {
       const pts: Phaser.Math.Vector2[] = [];
       for (let i = 0; i <= 14; i++) {
@@ -659,7 +678,8 @@ export class GameScene extends Phaser.Scene {
   private coupleOn(m: Mover) {
     sfx.clunk();
     const t = this.frontOf(m);
-    this.starBurst(this.px(t.x), this.py(t.y) - this.cell * 0.15);
+    const at = this.scr(this.px(t.x), this.py(t.y), 0.15);
+    this.starBurst(at.x, at.y);
     m.v.squash(this);
     if (this.coupled.length === 1) this.engine.squash(this);
     else this.coupled[this.coupled.length - 2].v.squash(this);
@@ -683,8 +703,12 @@ export class GameScene extends Phaser.Scene {
       if (out === null) break;
       if (p.type === 'exit') {
         // drive straight on until the whole train is off the screen
-        const cx = this.px(x + 0.5), cy = this.py(y + 0.5);
-        const toEdge = [cy, W - cx, H - cy, cx][out] / this.cell;
+        // straight on until it is off the screen
+        let toEdge = 0;
+        for (; toEdge < 40; toEdge++) {
+          const q = this.scr(this.px(x + 0.5 + DX[out] * toEdge), this.py(y + 0.5 + DY[out] * toEdge));
+          if (q.x < -this.scell || q.x > W + this.scell || q.y < -this.scell || q.y > H + this.scell) break;
+        }
         trail.add([{ x: x + 0.5, y: y + 0.5 }, { x: x + 0.5 + DX[out] * (toEdge + 8), y: y + 0.5 + DY[out] * (toEdge + 8) }]);
         exitD = trail.length - 8 + 0.6;
         break;

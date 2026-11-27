@@ -1,9 +1,9 @@
 // The 3D board: a real three.js scene drawn under the (transparent) Phaser canvas.
 // Phaser still runs the game, the tray, the buttons and all input; this layer only mirrors what is on the board.
 //
-// The camera is orthographic and looks down at THETA from the horizontal. The world is laid out in design pixels
-// (1920 x 1200), with the ground squeezed so that a point on the ground lands on exactly the same screen pixel as in
-// the 2D game. That keeps every tap, drag and drop square where Phaser expects it.
+// The camera is orthographic, tilted down and turned so the squares run diagonally (a high-angle diorama view).
+// The world is laid out in the 2D game's board coordinates (design pixels); GameScene turns board points into screen
+// points (and taps back into board points) through toScreen / fromScreen.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -11,8 +11,25 @@ import { DX, DY, cellPath, opp, sides, type Dir, type Piece } from '../track';
 import { PAL, TUNNEL_COLOURS } from '../terrain';
 import type { Biome } from '../levels';
 
-export const THETA = 56 * Math.PI / 180;
-const SIN = Math.sin(THETA);
+/**
+ * Look settings, tweakable live in dev mode (?dev) and remembered on the device.
+ * pitch: degrees the camera looks down from the horizontal; yaw: degrees it is turned, so the squares run diagonally;
+ * pixel: render at 1/pixel resolution with chunky pixels (1 = off); ink: outline width; shadow: shadow darkness;
+ * bands: toon light steps.
+ */
+export const DEFAULTS = { pitch: 55, yaw: -22, pixel: 1, ink: 1.4, shadow: 0.22, bands: 3 };
+export type Look = typeof DEFAULTS;
+export const look: Look = (() => {
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('choo.look') ?? '{}') }; } catch { return { ...DEFAULTS }; }
+})();
+export function saveLook() { try { localStorage.setItem('choo.look', JSON.stringify(look)); } catch { /* ignore */ } }
+const inkScale = { value: look.ink };
+
+function bandData(n: number) {
+  const d = new Uint8Array(n);
+  for (let i = 0; i < n; i++) d[i] = Math.round(120 + (255 - 120) * (n === 1 ? 1 : i / (n - 1)));
+  return d;
+}
 const INK = 0x2d2a3e;
 
 // ---------- materials ----------
@@ -20,7 +37,7 @@ let gradTex: THREE.DataTexture | null = null;
 function gradient() {
   if (!gradTex) {
     // three bands of light: shade, middle, lit
-    gradTex = new THREE.DataTexture(new Uint8Array([120, 190, 255]), 3, 1, THREE.RedFormat);
+    gradTex = new THREE.DataTexture(bandData(look.bands), look.bands, 1, THREE.RedFormat);
     gradTex.minFilter = gradTex.magFilter = THREE.NearestFilter;
     gradTex.generateMipmaps = false;
     gradTex.needsUpdate = true;
@@ -46,13 +63,18 @@ function ink(color = INK, px = 5) {
   let m = inkCache.get(k);
   if (!m) {
     m = new THREE.ShaderMaterial({
-      uniforms: { color: { value: new THREE.Color(color) }, px: { value: px } },
+      uniforms: { color: { value: new THREE.Color(color) }, px: { value: px }, inkScale },
       vertexShader: `
         uniform float px;
+        uniform float inkScale;
         void main() {
+          float w = px * inkScale;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
           vec3 n = normalize(normalMatrix * normal);
-          mv.xyz += n * px;
+          mv.xy += n.xy * w;
+          // and push it back, away from the camera: the outline then shows only around the edge of the whole
+          // object, never as dark spikes over a neighbouring part (wheels against the chassis, the dome on the boiler)
+          mv.z -= w * 4.0;
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: `
@@ -547,16 +569,12 @@ class World {
     document.body.prepend(el);
 
     this.camera = new THREE.OrthographicCamera(0, W, 0, -H, 1, 30000);
-    const D = 8000;
-    this.camera.position.set(0, D * Math.sin(THETA), D * Math.cos(THETA));
-    this.camera.lookAt(0, 0, 0);
-    this.root.scale.z = 1 / SIN;
     this.scene.add(this.root);
 
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0xb8c8a0, 1.9));
     this.sun = new THREE.DirectionalLight(0xffffff, 1.6);
-    const cx = W / 2, cz = H / 2 / SIN;
-    this.sun.position.set(cx - 900, 1600, cz - 300);
+    const cx = W / 2, cz = H / 2;
+    this.sun.position.set(cx - 900, 1600, cz - 500);
     this.sun.target.position.set(cx, 0, cz);
     this.scene.add(this.sun, this.sun.target);
     this.sun.castShadow = true;
@@ -571,12 +589,72 @@ class World {
   fit(canvas: HTMLCanvasElement) {
     const r = canvas.getBoundingClientRect();
     const el = this.renderer.domElement;
-    const pr = Math.min(2, window.devicePixelRatio || 1);
+    const pr = Math.min(2, window.devicePixelRatio || 1) / Math.max(1, look.pixel);
+    el.style.imageRendering = look.pixel > 1 ? 'pixelated' : '';
     if (this.renderer.getPixelRatio() !== pr) this.renderer.setPixelRatio(pr);
     const sz = this.renderer.getSize(new THREE.Vector2());
     if (Math.round(sz.x) !== Math.round(r.width) || Math.round(sz.y) !== Math.round(r.height)) this.renderer.setSize(r.width, r.height, false);
     el.style.left = `${r.left}px`; el.style.top = `${r.top}px`;
     el.style.width = `${r.width}px`; el.style.height = `${r.height}px`;
+  }
+
+  /** design px on screen per world unit */
+  k = 1;
+  private last: [number, number, number, number] = [0, 0, 1, 1];
+  private catcher: THREE.Mesh | null = null;
+
+  /** Apply changed look settings (dev mode). Taps only line up with a moved camera after the level restarts. */
+  applyLook() {
+    saveLook();
+    inkScale.value = look.ink;
+    const g = gradient();
+    g.image = { data: bandData(look.bands), width: look.bands, height: 1 };
+    g.needsUpdate = true;
+    if (this.catcher) (this.catcher.material as THREE.ShadowMaterial).opacity = look.shadow;
+    this.frame(...this.last);
+  }
+
+  /**
+   * Aim the camera at a board (rectangle on the ground, design px) and zoom so it fills the space above the tray.
+   * Must run before anything asks where a board point shows on screen.
+   */
+  frame(ox: number, oy: number, w: number, h: number) {
+    const cam = this.camera, D = 8000;
+    const tx = ox + w / 2, tz = oy + h / 2;
+    this.last = [ox, oy, w, h];
+    const P = look.pitch * Math.PI / 180, Y = look.yaw * Math.PI / 180;
+    cam.position.set(tx + D * Math.sin(Y) * Math.cos(P), D * Math.sin(P), tz + D * Math.cos(Y) * Math.cos(P));
+    cam.up.set(0, 1, 0);
+    cam.lookAt(tx, 0, tz);
+    cam.updateMatrixWorld(true);
+    // the board's corners (a little margin, and some height for trains and hills) in camera space
+    const m = 20, inv = cam.matrixWorldInverse;
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const [x, z] of [[ox - m, oy - m], [ox + w + m, oy - m], [ox - m, oy + h + m], [ox + w + m, oy + h + m]]) for (const y of [0, 40]) {
+      const v = new THREE.Vector3(x, y, z).applyMatrix4(inv);
+      x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x); y0 = Math.min(y0, v.y); y1 = Math.max(y1, v.y);
+    }
+    // screen space for the board: below the home button, above the tray
+    const SX0 = 30, SX1 = this.W - 30, SY0 = 30, SY1 = 960;
+    this.k = Math.min((SX1 - SX0) / (x1 - x0), (SY1 - SY0) / (y1 - y0));
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, sx = (SX0 + SX1) / 2, sy = (SY0 + SY1) / 2;
+    cam.left = cx - sx / this.k; cam.right = cam.left + this.W / this.k;
+    cam.top = cy + sy / this.k; cam.bottom = cam.top - this.H / this.k;
+    cam.updateProjectionMatrix();
+  }
+
+  /** Where a ground point (design px) at height h shows on screen. */
+  toScreen(x: number, y: number, h = 0) {
+    const v = new THREE.Vector3(x, h, y).project(this.camera);
+    return { x: (v.x + 1) / 2 * this.W, y: (1 - v.y) / 2 * this.H };
+  }
+
+  /** The ground point under a screen point. */
+  fromScreen(sx: number, sy: number) {
+    const o = new THREE.Vector3(sx / this.W * 2 - 1, 1 - sy / this.H * 2, -1).unproject(this.camera);
+    const d = this.camera.getWorldDirection(new THREE.Vector3());
+    const t = -o.y / d.y;
+    return { x: o.x + d.x * t, y: o.z + d.z * t };
   }
 
   private px(u: number) { return this.S.ox + u * this.S.cell; }
@@ -595,11 +673,19 @@ class World {
     this.groundTex = new THREE.CanvasTexture(src);
     this.groundTex.colorSpace = THREE.SRGBColorSpace;
     this.groundTex.anisotropy = 4;
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(this.W, this.H).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: this.groundTex }));
+    // the painted ground reaches half a screen past each edge (see GameScene.drawBackground)
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(this.W * 2, this.H * 2).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: this.groundTex }));
     ground.position.set(this.W / 2, 0, this.H / 2);
     ground.geometry.userData.own = true;
+    // plain ground colour reaching far past the painted part, for whatever a turned camera sees
+    const base = new THREE.Mesh(memo('baseplane', () => new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2)), basic(PAL[S.biome].ground));
+    base.scale.set(this.W * 12, 1, this.H * 12);
+    base.position.set(this.W / 2, -1, this.H / 2);
+    this.board.add(base);
+    this.renderer.setClearColor(PAL[S.biome].ground);
     this.board.add(ground);
-    const catcher = new THREE.Mesh(new THREE.PlaneGeometry(this.W * 1.2, this.H * 1.2).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({ color: 0x1d3d14, opacity: 0.22 }));
+    const catcher = new THREE.Mesh(new THREE.PlaneGeometry(this.W * 2, this.H * 2).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({ color: 0x1d3d14, opacity: look.shadow }));
+    this.catcher = catcher;
     catcher.position.set(this.W / 2, 2, this.H / 2);
     catcher.geometry.userData.own = true;
     catcher.receiveShadow = true;
@@ -650,6 +736,7 @@ class World {
     };
     add(S.engine, 'engine');
     for (const m of S.movers) add(m.v, m.v.kind);
+    this.syncVehicles(0); // so smoke never starts from the corner before the first frame
     this.syncSwitches();
   }
 
@@ -706,7 +793,8 @@ class World {
       let landed = false;
       if (t.cell && !t.dragged) {
         const [x, y] = t.cell.split(',').map(Number);
-        landed = Math.hypot(t.c.x - this.px(x + 0.5), t.c.y - this.py(y + 0.5)) < 2;
+        const at = this.toScreen(this.px(x + 0.5), this.py(y + 0.5));
+        landed = Math.hypot(t.c.x - at.x, t.c.y - at.y) < 2;
       }
       let v = this.tokens.get(t);
       if (v && (!landed || v.cell !== t.cell)) { this.board.remove(v.g); this.tokens.delete(t); v = undefined; }
@@ -786,7 +874,18 @@ class World {
 
 let world: World | null = null;
 export function getWorld(W: number, H: number) {
-  if (!world) { world = new World(W, H); (window as any).__world = world; }
+  if (!world) {
+    world = new World(W, H);
+    (window as any).__world = world;
+    if (/[?&]dev\b/.test(location.search)) {
+      const w = world;
+      import('./devPanel').then(m => m.devPanel(() => w.applyLook(), () => {
+        const game = (window as any).__phaserGame;
+        const sc = game?.scene.getScene('game');
+        if (sc?.scene.isActive()) sc.scene.restart({ level: sc.li });
+      }));
+    }
+  }
   return world;
 }
 
