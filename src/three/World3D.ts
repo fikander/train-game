@@ -314,6 +314,7 @@ function numberSprite(n: number) {
   // always drawn on top, so coal lumps or a roof never cut into the number
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false }));
   s.renderOrder = 10;
+  s.layers.set(OVERLAY);
   return s;
 }
 
@@ -489,6 +490,8 @@ function bake(group: THREE.Group) {
 }
 
 // ---------- outlines ----------
+/** Layer for numbers and stars: drawn after the outlines, so no ink line ever crosses them. */
+const OVERLAY = 1;
 /**
  * Bold cartoon outlines drawn on screen, after the scene. A second pass draws only the surfaces' directions (normals)
  * and depth; wherever depth jumps (a silhouette) or the surface turns sharply (a crease), the ink colour goes on top
@@ -562,6 +565,10 @@ class Outline {
     // a jump in depth counts as an edge from about 6 screen pixels' worth of height
     u.thr.value = 6 / Math.max(0.05, k);
 
+    // shadows are worked out once per frame, for the colour pass only
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = true;
+    camera.layers.set(0);
     renderer.setRenderTarget(this.color);
     renderer.render(scene, camera);
 
@@ -586,8 +593,21 @@ class Outline {
 
     renderer.setRenderTarget(null);
     renderer.render(this.quadScene, this.quadCam);
+
+    // numbers and stars last, on top of everything (they don't test depth)
+    const ac = renderer.autoClear;
+    renderer.autoClear = false;
+    camera.layers.set(OVERLAY);
+    scene.background = null;
+    renderer.render(scene, camera);
+    scene.background = bg;
+    camera.layers.set(0);
+    renderer.autoClear = ac;
   }
 }
+
+/** see-through dark track for the track shadows (left out of the outlines, as it is transparent) */
+const ghostMat = new THREE.MeshBasicMaterial({ color: INK, transparent: true, opacity: 0.2, depthWrite: false });
 
 // ---------- the world ----------
 interface VehView { src: any; g: THREE.Group; kind: string }
@@ -605,6 +625,8 @@ export interface BoardScene {
   groundKey: string;
   textures: any;
   extraTrack: Piece[];
+  /** grown-ups' "track shadows": faint track that fits each empty square */
+  ghosts?: { type: 'straight' | 'curve'; x: number; y: number; rot: number }[];
   /** level map only: the level stops along the line */
   stations?: Station[];
 }
@@ -629,7 +651,9 @@ function starSprite() {
     starTex = new THREE.CanvasTexture(c);
     starTex.colorSpace = THREE.SRGBColorSpace;
   }
-  return new THREE.Sprite(new THREE.SpriteMaterial({ map: starTex, transparent: true }));
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: starTex, transparent: true }));
+  sp.layers.set(OVERLAY);
+  return sp;
 }
 
 function buildStation(st: Station) {
@@ -838,6 +862,12 @@ class World {
     }
 
     this.board.add(bake(statics));
+    if (S.ghosts?.length) {
+      const ghosts = new THREE.Group();
+      for (const gp of S.ghosts) place(buildPiece({ ...gp, fixed: true } as Piece), gp.x, gp.y, ghosts);
+      ghosts.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) { m.material = ghostMat; m.castShadow = false; m.receiveShadow = false; } });
+      this.board.add(bake(ghosts));
+    }
     this.stations = [];
     for (const st of S.stations ?? []) {
       const g = buildStation(st);
