@@ -8,6 +8,7 @@ import { PAL, drawForest, drawGround, drawHill, drawMeadow, drawPond, regions, t
 import { hintsOn } from './progress';
 import { CAR_L, ENG_L, SCALE, SPEED, TrainSim, fitRotation, junctionKeys, key, makeMover, type SimMover } from './sim';
 import { solvedLevels } from './progress';
+import { drawGear } from './grownups';
 import { USE_3D, getWorld, type TerrainItem } from './three/World3D';
 
 export const W = 1920, H = 1200;
@@ -397,6 +398,7 @@ export class GameScene extends Phaser.Scene {
 
   /** House in the top-left corner: back to the map of all levels. */
   private drawHomeButton() {
+    drawGear(this, { fade: PAL[this.biome].fade as [number, number, number] });
     const c = this.add.container(86, 84).setDepth(200);
     const g = this.add.graphics();
     g.fillStyle(0x000000, 0.18).fillCircle(0, 8, 62);

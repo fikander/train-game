@@ -17,12 +17,16 @@ import type { Biome } from '../levels';
  * pixel: render at 1/pixel resolution with chunky pixels (1 = off); ink: outline width; shadow: shadow darkness;
  * bands: toon light steps.
  */
-export const DEFAULTS = { pitch: 55, yaw: -22, pixel: 6, ink: 1.4, shadow: 0.22, bands: 3 };
+export const DEFAULTS = { pitch: 55, yaw: -27, pixel: 1, ink: 1.5, shadow: 0.22, bands: 3 };
+/** Pixel size used when the grown-ups turn the pixelated look on. */
+export const PIXEL_ON = 6;
+// v2: new defaults (Tomek, 2026-11-27), so older saved slider values don't hide them
+const KEY = 'choo.look2';
 export type Look = typeof DEFAULTS;
 export const look: Look = (() => {
-  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('choo.look') ?? '{}') }; } catch { return { ...DEFAULTS }; }
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }; } catch { return { ...DEFAULTS }; }
 })();
-export function saveLook() { try { localStorage.setItem('choo.look', JSON.stringify(look)); } catch { /* ignore */ } }
+export function saveLook() { try { localStorage.setItem(KEY, JSON.stringify(look)); } catch { /* ignore */ } }
 const inkScale = { value: look.ink };
 
 function bandData(n: number) {

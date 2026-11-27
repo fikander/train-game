@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
 import { REF, VEH, drawPiece, makeTextures } from './art';
-import { isMuted, setMuted, sfx } from './audio';
+import { sfx } from './audio';
 import { W, H } from './GameScene';
 import { BIOMES, LEVELS, PER_BIOME, biomeOf, type Biome } from './levels';
-import { hintsOn, isUnlocked, nextLevel, setHints, solvedLevels } from './progress';
+import { isUnlocked, nextLevel, solvedLevels } from './progress';
 import { DX, DY, Trail, cellPath, type Dir, type Piece } from './track';
 import { PAL, drawForest, drawGround, drawHill, drawPond, drawStream } from './terrain';
+import { drawGear } from './grownups';
 import { USE_3D, getWorld, type Station, type TerrainItem } from './three/World3D';
 
 const T = 120; // map track cell size in px
@@ -96,7 +97,7 @@ export class MapScene extends Phaser.Scene {
       }
     }
     this.drawPageArrows();
-    this.drawGrownUpGear();
+    drawGear(this, { busy: b => { this.busy = b; }, fade: this.fade() });
     if (this.view) {
       const world = this.view;
       // keep trees off the line and the level pads
@@ -214,81 +215,6 @@ export class MapScene extends Phaser.Scene {
       return best;
     });
     return boxes;
-  }
-
-  /** Grown-ups: hold the little gear for 1.5 s for sound, track shadows and any level. */
-  private drawGrownUpGear() {
-    const c = this.add.container(1860, 64).setDepth(200).setAlpha(0.5);
-    const g = this.add.graphics();
-    g.fillStyle(INK).fillCircle(0, 0, 26);
-    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; g.fillCircle(Math.cos(a) * 26, Math.sin(a) * 26, 8); }
-    g.fillStyle(0xffffff).fillCircle(0, 0, 11);
-    const ring = this.add.graphics();
-    c.add([g, ring]);
-    c.setSize(90, 90).setInteractive();
-    let timer: Phaser.Time.TimerEvent | null = null;
-    let t0 = 0;
-    const cancel = () => { timer?.remove(); timer = null; ring.clear(); };
-    c.on('pointerdown', () => {
-      t0 = this.time.now;
-      timer = this.time.addEvent({
-        delay: 30, loop: true, callback: () => {
-          const f = (this.time.now - t0) / 1500;
-          ring.clear().lineStyle(8, 0xffffff).beginPath().arc(0, 0, 40, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2).strokePath();
-          if (f >= 1) { cancel(); this.openGrownUpPanel(); }
-        },
-      });
-    });
-    c.on('pointerup', cancel);
-    c.on('pointerout', cancel);
-  }
-
-  private openGrownUpPanel() {
-    this.busy = true;
-    const layer = this.add.container(0, 0).setDepth(500);
-    const bg = this.add.rectangle(W / 2, H / 2, W, H, 0x1c2b1a, 0.88).setInteractive();
-    layer.add(bg);
-    const font = 'Arial Rounded MT Bold, Arial, sans-serif';
-    // toggles
-    const toggle = (x: number, label: string, get: () => boolean, set: (v: boolean) => void) => {
-      const c = this.add.container(x, 170);
-      const g = this.add.graphics();
-      const t = this.add.text(0, 0, '', { fontFamily: font, fontSize: '40px', color: '#2d2a3e', fontStyle: 'bold' }).setOrigin(0.5);
-      const draw = () => {
-        const on = get();
-        g.clear().fillStyle(on ? 0x8ee06a : 0xcfd6cc).fillRoundedRect(-230, -60, 460, 120, 30);
-        t.setText(`${label}: ${on ? 'on' : 'off'}`);
-      };
-      draw();
-      c.add([g, t]);
-      c.setSize(460, 120).setInteractive();
-      c.on('pointerup', () => { set(!get()); sfx.boop(); draw(); });
-      layer.add(c);
-    };
-    toggle(W / 2 - 500, 'Sound', () => !isMuted(), v => setMuted(!v));
-    toggle(W / 2, 'Track shadows', hintsOn, setHints);
-    const close = this.add.text(W / 2 + 500, 170, '✕', { fontFamily: font, fontSize: '96px', color: '#ffffff' }).setOrigin(0.5).setInteractive();
-    close.on('pointerup', () => { layer.destroy(); this.busy = false; });
-    layer.add(close);
-    // every level, ten to a row (one row per biome)
-    const solved = solvedLevels();
-    LEVELS.forEach((_, i) => {
-      const b = biomeOf(i);
-      const x = W / 2 + ((i % PER_BIOME) - 4.5) * 150, y = 400 + Math.floor(i / PER_BIOME) * 170;
-      const c = this.add.container(x, y);
-      const g = this.add.graphics();
-      g.fillStyle(PAL[b].board).fillRoundedRect(-62, -62, 124, 124, 24);
-      g.lineStyle(6, PAL[b].lines).strokeRoundedRect(-62, -62, 124, 124, 24);
-      const t = this.add.text(0, 0, String(i + 1), { fontFamily: font, fontSize: '54px', color: '#2d2a3e', fontStyle: 'bold' }).setOrigin(0.5);
-      c.add([g, t]);
-      if (solved.has(i)) c.add(this.add.image(44, -44, 'star').setScale(0.26));
-      c.setSize(124, 124).setInteractive();
-      c.on('pointerup', () => {
-        this.cameras.main.fadeOut(300, ...this.fade());
-        this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('game', { level: i }));
-      });
-      layer.add(c);
-    });
   }
 
   private drawBox(i: number, x: number, y: number, solved: boolean, open: boolean, isNext: boolean) {

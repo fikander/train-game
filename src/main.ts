@@ -20,4 +20,7 @@ const game = new Phaser.Game({
   scene: [StartScene, MapScene, GameScene],
 });
 (window as any).__phaserGame = game;
+// Phaser's canvas (tray, buttons) must stack above the absolutely placed 3D canvas, or it is hidden under it
+const lift = () => { game.canvas.style.position = 'relative'; game.canvas.style.zIndex = '1'; };
+if (game.canvas) lift(); else game.events.once('ready', lift);
 if (USE_3D) setupDisplay(game);

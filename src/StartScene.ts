@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { REF, VEH, drawRails, makeTextures } from './art';
 import { unlockAudio } from './audio';
 import { W, H } from './GameScene';
+import { drawGear } from './grownups';
 
 export class StartScene extends Phaser.Scene {
   constructor() { super('start'); }
@@ -72,6 +73,7 @@ export class StartScene extends Phaser.Scene {
       });
     };
     btn.on('pointerup', go);
+    drawGear(this, { busy: b => { started = b; } });
   }
 }
 
