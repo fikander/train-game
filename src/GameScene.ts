@@ -190,20 +190,13 @@ export class GameScene extends Phaser.Scene {
     (window as any).__scene = this;
   }
 
-  /** Hills over tunnel squares, drawn above the carriages so they disappear inside. */
+  /** A hill over each tunnel mouth, drawn above the carriages so they disappear inside; each pair has its own colour. */
   private drawTunnels() {
-    const tun = [...this.grid.values()].filter(p => p.tunnel);
-    const keys = new Set(tun.map(p => key(p.x, p.y)));
-    for (const run of regions(tun.map(p => ({ x: p.x, y: p.y })))) {
-      const ends: { x: number; y: number; a: number }[] = [];
-      for (const c of run) {
-        for (const d of sides(this.grid.get(key(c.x, c.y))!)) {
-          if (keys.has(key(c.x + DX[d], c.y + DY[d]))) continue;
-          ends.push({ x: this.px(c.x + 0.5 + DX[d] * 0.5), y: this.py(c.y + 0.5 + DY[d] * 0.5), a: dirAngle(d) });
-        }
-      }
+    for (const p of this.grid.values()) {
+      if (p.type !== 'portal') continue;
+      const end = { x: this.px(p.x + 0.5 + DX[p.rot] * 0.5), y: this.py(p.y + 0.5 + DY[p.rot] * 0.5), a: dirAngle(p.rot) };
       const g = this.add.graphics().setDepth(30);
-      drawHill(g, run.map(c => ({ x: this.px(c.x + 0.5), y: this.py(c.y + 0.5) })), this.cell, this.biome, ends);
+      drawHill(g, [{ x: this.px(p.x + 0.5), y: this.py(p.y + 0.5) }], this.cell, this.biome, [end], p.pair ?? 0);
     }
   }
 
@@ -611,8 +604,7 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < 6; i++) this.time.delayedCall(i * 90, () => { const sp = this.engine.smokePoint; this.smoke.emitParticleAt(sp.x, sp.y, 2); });
     // the whole train leaves along the last carriage's track, through the engine square and into the tunnel
     const last = this.coupled[this.coupled.length - 1];
-    const trail = new Trail();
-    trail.add(last.trail.pts.slice(0, Math.max(2, last.trail.pts.length)));
+    const trail = last.trail.copy(); // keeps the jumps through tunnels
     let { x, y, dir } = last.pending;
     let exitD = trail.length + 20;
     for (let guard = 0; guard < 30; guard++) {

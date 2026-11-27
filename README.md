@@ -5,8 +5,9 @@ Drag track pieces into the empty squares, flip switches by tapping them, then pr
 The white steam engine waits at the end of the line. The numbered carriages (coal truck, passenger coach, tank wagon) all set off together and must reach the engine in order 1, 2, 3. When the train is complete it puffs off the edge of the screen and a little engine on the level map chugs on to the next box. Solved levels stay unlocked on the map. Everything is seen from above.
 
 - No reading and no real fail states: if carriages bump into each other, arrive in the wrong order or get stuck, there's a soft bump and they all roll back to try again.
-- 30 levels (`src/levels.ts`), from one straight piece up to three lines, dead ends and a detour, a pointing hand hint after 10 seconds of no progress.
-- Grown-ups: hold the little gear in the top-right corner for 1.5 s for level select and sound on/off.
+- 30 levels (`src/levels.ts`) in three worlds: meadow (straights, bends, more carriages, lines joining), desert (switches) and snow (tunnels). A pointing hand hint shows after 10 seconds of no progress.
+- Tunnels work like portals: a carriage goes into one tunnel mouth and comes out of its partner somewhere else on the board. Each pair of mouths has its own colour (arch and flag).
+- Grown-ups: on the map, hold the little gear in the top-right corner for 1.5 s for sound on/off, faint track shadows on/off, and picking any level.
 - Installable as a full-screen app (PWA): open in Chrome on the tablet, then "Add to Home screen".
 - Testing shortcut: `?level=5` opens level 5.
 

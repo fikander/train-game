@@ -14,7 +14,7 @@ describe.each(LEVELS.map((L, i) => [i + 1, L] as const))('level %i', (_n, L) => 
     for (const g of L.gaps) expect(taken.has(key(g.x, g.y)), `gap ${g.x},${g.y}`).toBe(false);
     for (const p of [...L.pieces, ...L.gaps]) expect(p.x >= 0 && p.x < L.cols && p.y >= 0 && p.y < L.rows, `${p.x},${p.y} on board`).toBe(true);
     expect(L.gaps.length + (L.spare?.length ?? 0)).toBeLessThanOrEqual(6);
-    expect(L.pieces.filter(p => p.tunnel).every(p => p.type === "straight")).toBe(true); // fits the tray
+    for (const t of L.pieces.filter(p => p.type === 'portal')) expect(L.pieces.filter(p => p.type === 'portal' && p.pair === t.pair), `tunnel pair ${t.pair}`).toHaveLength(2);
   });
 
   it('every gap piece joins up with its neighbours', () => {

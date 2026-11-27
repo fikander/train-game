@@ -132,7 +132,10 @@ export function drawMeadow(g: Phaser.GameObjects.Graphics, c: Cell, s: number, r
  * A hill over a run of tunnel squares (centres in px), with a dark portal at each open end.
  * `ends` are the points (px) where the track goes in and out, with the direction it faces outwards.
  */
-export function drawHill(g: Phaser.GameObjects.Graphics, cells: Cell[], s: number, b: Biome, ends: { x: number; y: number; a: number }[]) {
+/** Each pair of tunnel mouths has its own colour, so a child can see which two belong together. */
+export const TUNNEL_COLOURS = [0xe8483f, 0x3f86e8, 0xf2c230];
+
+export function drawHill(g: Phaser.GameObjects.Graphics, cells: Cell[], s: number, b: Biome, ends: { x: number; y: number; a: number }[], pair?: number) {
   const P = PAL[b];
   for (const c of cells) g.fillStyle(0x000000, 0.12).fillCircle(c.x + s * 0.06, c.y + s * 0.08, s * 0.56);
   for (const c of cells) g.fillStyle(P.hill).fillCircle(c.x, c.y, s * 0.56);
@@ -150,8 +153,18 @@ export function drawHill(g: Phaser.GameObjects.Graphics, cells: Cell[], s: numbe
       }
       return out;
     };
-    g.fillStyle(0x8c8a86).fillPoints(pts(s * 0.42, s * 0.2), true);
-    g.fillStyle(0x2b2433).fillPoints(pts(s * 0.32, s * 0.14), true);
+    const arch = pair === undefined ? 0x8c8a86 : TUNNEL_COLOURS[pair % TUNNEL_COLOURS.length];
+    g.fillStyle(0x2b2433, 0.35).fillPoints(pts(s * 0.46, s * 0.23), true);
+    g.fillStyle(arch).fillPoints(pts(s * 0.42, s * 0.2), true);
+    g.fillStyle(0x2b2433).fillPoints(pts(s * 0.3, s * 0.13), true);
+  }
+  if (pair !== undefined) {
+    // a little flag of the same colour on top of the hill
+    const c = cells[0], col = TUNNEL_COLOURS[pair % TUNNEL_COLOURS.length];
+    const fx = c.x + s * 0.06, fy = c.y - s * 0.02;
+    g.fillStyle(0x5a4a3a).fillRect(fx - s * 0.015, fy - s * 0.3, s * 0.03, s * 0.3);
+    g.fillStyle(col).fillTriangle(fx + s * 0.015, fy - s * 0.3, fx + s * 0.015, fy - s * 0.14, fx + s * 0.2, fy - s * 0.22);
+    g.fillStyle(0x2b2433, 0.25).fillEllipse(fx, fy, s * 0.12, s * 0.05);
   }
 }
 

@@ -251,6 +251,9 @@ export function drawPiece(g: Phaser.GameObjects.Graphics, p: Piece, s: number) {
       g.fillStyle(0xffffff).fillRoundedRect(bx - w / 2 + (horiz ? w * 0.25 : w * 0.1), by - h / 2 + (horiz ? h * 0.1 : h * 0.25), horiz ? w * 0.5 : w * 0.8, horiz ? h * 0.8 : h * 0.5, 3);
       break;
     }
+    case 'portal': // the hill on top hides everything but the track running into the mouth
+      drawRails(g, p.rot as Dir, opp(p.rot), s, true);
+      break;
     case 'exit': {
       const d = p.rot as Dir;
       drawRails(g, opp(d), d, s, true);

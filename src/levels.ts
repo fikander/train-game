@@ -26,8 +26,8 @@ const END = (x: number, y: number, open: Dir): Piece => ({ type: 'end', x, y, ro
 const CAR = (x: number, y: number, dir: Dir, n: number): Piece => ({ type: 'car', x, y, rot: dir, num: n, car: KINDS[(n - 1) % 3], fixed: true });
 const SW = (x: number, y: number, inDir: Dir, out1: Dir, out2: Dir, state: 0 | 1 = 0): Piece =>
   ({ type: 'switch', x, y, rot: 0, inDir, out1, out2, state, fixed: true });
-/** straight track running through a tunnel under a hill */
-const T = (x: number, y: number, rot: number): Piece => ({ type: 'straight', x, y, rot, fixed: true, tunnel: true });
+/** a tunnel mouth whose track opens towards `open`; carriages going in come out of the other mouth with the same `pair` */
+const TU = (x: number, y: number, open: Dir, pair: number): Piece => ({ type: 'portal', x, y, rot: open, pair, fixed: true });
 const gS = (x: number, y: number, rot: number): Gap => ({ x, y, type: 'straight', rot });
 const gC = (x: number, y: number, rot: number): Gap => ({ x, y, type: 'curve', rot });
 
@@ -37,7 +37,7 @@ const gC = (x: number, y: number, rot: number): Gap => ({ x, y, type: 'curve', r
 // Directions: 0 N, 1 E, 2 S, 3 W. Curve rot r joins sides r and r+1 (0 N-E, 1 E-S, 2 S-W, 3 W-N).
 // The engine waits near the end; carriages drive to it and must arrive in order 1, 2, 3.
 // Behind the engine there must be enough straight track for the whole train (about 0.8 squares per carriage).
-// Ten levels per biome. Meadow: straights, bends, more carriages, lines joining. Desert: switches. Snow: tunnels and everything together.
+// Ten levels per biome. Meadow: straights, bends, more carriages, lines joining. Desert: switches. Snow: tunnels (in one mouth, out of its partner elsewhere; each pair has its own colour) and everything together.
 export const LEVELS: Level[] = [
   // ---------- meadow ----------
   { note: 'one straight', cols: 5, rows: 3, pieces: [CAR(0, 1, 1, 1), S(2, 1, 0), ENGINE(3, 1, 1), EXIT(4, 1, 1)], gaps: [gS(1, 1, 0)] },
@@ -148,61 +148,58 @@ export const LEVELS: Level[] = [
   },
   // ---------- snow ----------
   {
-    note: 'first tunnel', cols: 7, rows: 3,
-    pieces: [CAR(0, 1, 1, 1), T(2, 1, 0), T(3, 1, 0), ENGINE(5, 1, 1), EXIT(6, 1, 1)],
-    gaps: [gS(1, 1, 0), gS(4, 1, 0)],
+    note: 'first tunnel: in at the top, out at the bottom', cols: 5, rows: 3,
+    pieces: [CAR(0, 0, 1, 1), TU(2, 0, 3, 0), TU(0, 2, 1, 0), S(2, 2, 0), ENGINE(3, 2, 1), EXIT(4, 2, 1)],
+    gaps: [gS(1, 0, 0), gS(1, 2, 0)],
   },
   {
-    note: 'down through the mountain', cols: 7, rows: 4,
-    pieces: [CAR(0, 0, 1, 1), T(2, 1, 1), T(2, 2, 1), S(4, 3, 0), ENGINE(5, 3, 1), EXIT(6, 3, 1)],
-    gaps: [gS(1, 0, 0), gC(2, 0, 2), gC(2, 3, 0), gS(3, 3, 0)],
+    note: 'out of the tunnel and round a bend', cols: 7, rows: 4,
+    pieces: [CAR(0, 1, 1, 1), TU(2, 1, 3, 0), TU(3, 0, 2, 0), S(4, 2, 0), ENGINE(5, 2, 1), EXIT(6, 2, 1)],
+    gaps: [gS(1, 1, 0), gS(3, 1, 1), gC(3, 2, 0)],
   },
   {
-    note: 'two carriages through a tunnel and round', cols: 9, rows: 3,
-    pieces: [CAR(0, 0, 1, 2), CAR(1, 0, 1, 1), T(2, 0, 0), T(3, 0, 0), S(5, 2, 0), ENGINE(7, 2, 1), EXIT(8, 2, 1)],
-    gaps: [gC(4, 0, 2), gS(4, 1, 1), gC(4, 2, 0), gS(6, 2, 0)],
+    note: 'two carriages through the tunnel', cols: 6, rows: 3,
+    pieces: [CAR(0, 0, 1, 2), CAR(1, 0, 1, 1), TU(3, 0, 3, 0), TU(0, 2, 1, 0), S(3, 2, 0), ENGINE(4, 2, 1), EXIT(5, 2, 1)],
+    gaps: [gS(2, 0, 0), gS(1, 2, 0), gS(2, 2, 0)],
   },
   {
-    note: 'three carriages through a tunnel', cols: 10, rows: 3,
-    pieces: [CAR(0, 1, 1, 3), CAR(1, 1, 1, 2), CAR(2, 1, 1, 1), T(4, 1, 0), T(5, 1, 0), S(7, 1, 0), ENGINE(8, 1, 1), EXIT(9, 1, 1)],
-    gaps: [gS(3, 1, 0), gS(6, 1, 0)],
+    note: 'two different tunnels, one after the other', cols: 7, rows: 4,
+    pieces: [CAR(0, 0, 1, 1), TU(2, 0, 3, 0), TU(0, 2, 1, 0), TU(2, 2, 3, 1), TU(3, 3, 1, 1), ENGINE(5, 3, 1), EXIT(6, 3, 1)],
+    gaps: [gS(1, 0, 0), gS(1, 2, 0), gS(4, 3, 0)],
   },
   {
-    note: 'switch into the tunnel', cols: 8, rows: 3,
-    pieces: [CAR(0, 0, 1, 1), S(1, 0, 0), SW(2, 0, 3, 1, 2), S(3, 0, 0), END(4, 0, 3), T(3, 1, 0), T(4, 1, 0), ENGINE(6, 1, 1), EXIT(7, 1, 1)],
-    gaps: [gC(2, 1, 0), gS(5, 1, 0)],
+    note: 'a switch sends the carriage into the tunnel', cols: 5, rows: 4,
+    pieces: [CAR(0, 0, 1, 1), S(1, 0, 0), SW(2, 0, 3, 1, 2), S(3, 0, 0), END(4, 0, 3), TU(2, 2, 0, 0), TU(0, 3, 1, 0), S(2, 3, 0), ENGINE(3, 3, 1), EXIT(4, 3, 1)],
+    gaps: [gS(2, 1, 1), gS(1, 3, 0)],
   },
   {
-    note: 'lines join after the tunnel', cols: 8, rows: 4,
-    pieces: [CAR(1, 3, 1, 1), SW(3, 3, 1, 3, 0), S(5, 3, 0), ENGINE(6, 3, 1), EXIT(7, 3, 1),
-      CAR(0, 0, 1, 2), T(1, 0, 0), T(2, 0, 0), S(3, 1, 1), S(3, 2, 1)],
-    gaps: [gS(2, 3, 0), gC(3, 0, 2), gS(4, 3, 0)],
+    note: 'out of the tunnel to join the line', cols: 7, rows: 4,
+    pieces: [CAR(1, 3, 1, 1), SW(3, 3, 1, 3, 0), S(4, 3, 0), ENGINE(5, 3, 1), EXIT(6, 3, 1),
+      CAR(0, 0, 1, 2), TU(2, 0, 3, 0), TU(3, 1, 2, 0)],
+    gaps: [gS(2, 3, 0), gS(1, 0, 0), gS(3, 2, 1)],
   },
   {
-    note: 'two switches and a tunnel', cols: 8, rows: 4,
-    pieces: [CAR(0, 1, 1, 1), S(1, 1, 0), SW(2, 1, 3, 1, 2), END(3, 1, 3),
-      C(2, 3, 0), T(3, 3, 0), SW(4, 3, 3, 1, 0), S(5, 3, 0), END(6, 3, 3),
-      T(4, 2, 1), C(4, 1, 1), ENGINE(6, 1, 1), EXIT(7, 1, 1)],
-    gaps: [gS(2, 2, 1), gS(5, 1, 0)],
+    note: 'pick the right tunnel', cols: 8, rows: 4,
+    pieces: [CAR(0, 1, 1, 1), SW(2, 1, 3, 0, 2), TU(2, 0, 2, 0), TU(4, 0, 1, 0), S(5, 0, 0), END(6, 0, 3),
+      TU(2, 2, 0, 1), TU(3, 3, 1, 1), S(5, 3, 0), ENGINE(6, 3, 1), EXIT(7, 3, 1)],
+    gaps: [gS(1, 1, 0), gS(4, 3, 0)],
   },
   {
-    note: 'number 3 must dodge a dead end', cols: 10, rows: 4,
+    note: 'number 3 goes the long way under the hill', cols: 10, rows: 5,
     pieces: [CAR(1, 2, 1, 2), CAR(2, 2, 1, 1), SW(4, 2, 1, 3, 0), S(5, 2, 0), S(7, 2, 0), ENGINE(8, 2, 1), EXIT(9, 2, 1),
-      CAR(0, 0, 1, 3), SW(1, 0, 3, 2, 1), END(1, 1, 0), T(2, 0, 0), T(3, 0, 0), S(4, 1, 1)],
-    gaps: [gS(3, 2, 0), gS(6, 2, 0), gC(4, 0, 2)],
+      CAR(0, 4, 1, 3), SW(1, 4, 3, 0, 1), END(1, 3, 2), TU(3, 4, 3, 0), TU(4, 0, 2, 0)],
+    gaps: [gS(3, 2, 0), gS(6, 2, 0), gS(2, 4, 0), gS(4, 1, 1)],
   },
   {
-    note: 'hump and tunnel', cols: 10, rows: 5,
-    pieces: [CAR(0, 2, 1, 1), T(1, 2, 0), SW(5, 2, 1, 3, 2), S(6, 2, 0), S(7, 2, 0), ENGINE(8, 2, 1), EXIT(9, 2, 1),
-      CAR(1, 4, 1, 2), S(2, 4, 0), SW(3, 4, 3, 1, 0), SW(4, 4, 1, 3, 0), C(5, 4, 3), S(5, 3, 1),
-      C(3, 3, 1), C(4, 3, 2)],
-    gaps: [gS(2, 2, 0), gS(3, 2, 0), gS(4, 2, 0)],
+    note: 'two tunnels, two carriages, one line', cols: 9, rows: 4,
+    pieces: [CAR(0, 0, 1, 1), TU(2, 0, 3, 0), CAR(0, 3, 1, 2), TU(3, 3, 3, 1),
+      TU(3, 1, 1, 0), SW(5, 1, 1, 3, 2), S(6, 1, 0), ENGINE(7, 1, 1), EXIT(8, 1, 1), TU(5, 3, 0, 1)],
+    gaps: [gS(1, 0, 0), gS(4, 1, 0), gS(1, 3, 0), gS(2, 3, 0), gS(5, 2, 1)],
   },
   {
-    note: 'the grand finale', cols: 12, rows: 5,
-    pieces: [CAR(2, 2, 1, 1), S(3, 2, 0), SW(4, 2, 1, 3, 0), S(5, 2, 0), SW(6, 2, 1, 3, 2), S(8, 2, 0), S(9, 2, 0), ENGINE(10, 2, 1), EXIT(11, 2, 1),
-      CAR(2, 0, 1, 2), S(4, 1, 1),
-      CAR(0, 4, 1, 3), SW(1, 4, 3, 0, 1), END(1, 3, 2), T(2, 4, 0), T(3, 4, 0), S(5, 4, 0), C(6, 4, 3)],
-    gaps: [gS(3, 0, 0), gC(4, 0, 2), gS(7, 2, 0), gS(4, 4, 0), gS(6, 3, 1)],
+    note: 'the grand finale: a switch and two tunnels for number 3', cols: 11, rows: 5,
+    pieces: [CAR(2, 2, 1, 2), CAR(3, 2, 1, 1), SW(5, 2, 1, 3, 0), S(6, 2, 0), S(8, 2, 0), ENGINE(9, 2, 1), EXIT(10, 2, 1),
+      CAR(0, 4, 1, 3), SW(1, 4, 3, 0, 1), END(1, 3, 2), TU(3, 4, 3, 0), TU(0, 0, 1, 0), TU(2, 0, 3, 1), TU(4, 0, 1, 1), S(5, 1, 1)],
+    gaps: [gS(4, 2, 0), gS(7, 2, 0), gS(2, 4, 0), gS(1, 0, 0), gC(5, 0, 2)],
   },
 ];

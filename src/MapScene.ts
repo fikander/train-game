@@ -4,8 +4,8 @@ import { isMuted, setMuted, sfx } from './audio';
 import { W, H } from './GameScene';
 import { BIOMES, LEVELS, PER_BIOME, biomeOf, type Biome } from './levels';
 import { hintsOn, isUnlocked, nextLevel, setHints, solvedLevels } from './progress';
-import { DX, DY, Trail, cellPath, sides, type Dir, type Piece } from './track';
-import { PAL, drawForest, drawGround, drawHill, drawPond, drawStream, regions } from './terrain';
+import { DX, DY, Trail, cellPath, type Dir, type Piece } from './track';
+import { PAL, drawForest, drawGround, drawHill, drawPond, drawStream } from './terrain';
 
 const T = 120; // map track cell size in px
 const INK = 0x2d2a3e;
@@ -315,19 +315,12 @@ export class MapScene extends Phaser.Scene {
           .setScale(k).setRotation([-Math.PI / 2, 0, Math.PI / 2, Math.PI][p.rot]));
       }
     }
-    // tunnel hills
-    const tun = L.pieces.filter(p => p.tunnel);
-    for (const run of regions(tun.map(p => ({ x: p.x, y: p.y })))) {
-      const keys = new Set(run.map(q => `${q.x},${q.y}`));
-      const ends: { x: number; y: number; a: number }[] = [];
-      for (const q of run) {
-        const p = tun.find(t => t.x === q.x && t.y === q.y)!;
-        for (const d of sides(p)) if (!keys.has(`${q.x + DX[d]},${q.y + DY[d]}`)) {
-          ends.push({ x: ox + (q.x + 0.5 + DX[d] * 0.5) * s, y: oy + (q.y + 0.5 + DY[d] * 0.5) * s, a: [-Math.PI / 2, 0, Math.PI / 2, Math.PI][d] });
-        }
-      }
+    // tunnel hills, one per mouth, coloured by pair
+    for (const p of L.pieces) {
+      if (p.type !== 'portal') continue;
       const g = this.add.graphics();
-      drawHill(g, run.map(q => ({ x: ox + (q.x + 0.5) * s, y: oy + (q.y + 0.5) * s })), s, biomeOf(i), ends);
+      const end = { x: ox + (p.x + 0.5 + DX[p.rot] * 0.5) * s, y: oy + (p.y + 0.5 + DY[p.rot] * 0.5) * s, a: [-Math.PI / 2, 0, Math.PI / 2, Math.PI][p.rot] };
+      drawHill(g, [{ x: ox + (p.x + 0.5) * s, y: oy + (p.y + 0.5) * s }], s, biomeOf(i), [end], p.pair ?? 0);
       c.add(g);
     }
     if (!open) c.setAlpha(0.55);

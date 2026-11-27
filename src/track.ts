@@ -6,7 +6,7 @@ export const opp = (d: number): Dir => ((d + 2) % 4) as Dir;
 
 export type CarKind = 'coal' | 'passenger' | 'tank';
 
-export type PieceType = 'straight' | 'curve' | 'switch' | 'start' | 'car' | 'engine' | 'exit' | 'end';
+export type PieceType = 'straight' | 'curve' | 'switch' | 'start' | 'car' | 'engine' | 'exit' | 'end' | 'portal';
 
 export interface Piece {
   type: PieceType;
@@ -25,7 +25,7 @@ export interface Piece {
   num?: number;
   buffer?: boolean; // draw a buffer stop behind it
   junction?: boolean; // switch where lines only join: nothing to set
-  tunnel?: boolean; // straight under a hill: carriages disappear inside
+  pair?: number; // portal only: tunnel mouths with the same pair are joined under the ground (rot = open side)
 }
 
 /** Sides of a piece that connect to neighbours (used for auto-rotate and drawing). */
@@ -45,6 +45,7 @@ export function sides(p: Piece): Dir[] {
     case 'exit':
       return [opp(p.rot)];
     case 'end':
+    case 'portal':
       return [p.rot as Dir];
   }
 }
@@ -73,6 +74,8 @@ export function traverse(p: Piece, entry: Dir): Dir | null {
       return entry === p.rot ? opp(p.rot) : null;
     case 'end':
       return null;
+    case 'portal': // into the hill; the carriage then comes out of the other mouth (see TrainSim)
+      return entry === p.rot ? opp(p.rot) : null;
   }
 }
 
@@ -121,6 +124,20 @@ export class Trail {
     }
   }
 
+  /** Jump to another place without any distance in between (through a tunnel). */
+  jump(p: Pt) {
+    if (!this.pts.length) { this.add([p]); return; }
+    this.pts.push(p);
+    this.cum.push(this.cum[this.cum.length - 1]);
+  }
+
+  copy(): Trail {
+    const t = new Trail();
+    t.pts = [...this.pts];
+    t.cum = [...this.cum];
+    return t;
+  }
+
   private seg(d: number): number {
     // index i such that cum[i] <= d <= cum[i+1]
     let lo = 0, hi = this.cum.length - 2;
@@ -139,7 +156,7 @@ export class Trail {
     const i = this.seg(d);
     const p0 = this.pts[i], p1 = this.pts[i + 1];
     const segLen = this.cum[i + 1] - this.cum[i];
-    let t = (d - this.cum[i]) / segLen;
+    let t = segLen > 1e-9 ? (d - this.cum[i]) / segLen : 1;
     t = Math.max(0, Math.min(1, t));
     return { x: p0.x + (p1.x - p0.x) * t, y: p0.y + (p1.y - p0.y) * t, angle: Math.atan2(p1.y - p0.y, p1.x - p0.x) };
   }

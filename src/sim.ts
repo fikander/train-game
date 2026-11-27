@@ -66,6 +66,17 @@ export class TrainSim<M extends SimMover = SimMover> {
     const entry = opp(dir);
     const out = p ? traverse(p, entry) : null;
     if (!p || out === null) { m.state = 'stop'; m.speed = 0; return; }
+    if (p.type === 'portal') {
+      // in through this mouth, out of its partner somewhere else on the board
+      const q = partnerOf(this.grid, p);
+      if (!q) { m.state = 'stop'; m.speed = 0; return; }
+      // to the middle of this hill, then straight on from the middle of the other one (both hidden under the hills)
+      m.trail.add(cellPath(x, y, entry, out).slice(0, 7));
+      m.trail.jump({ x: q.x + 0.5, y: q.y + 0.5 });
+      m.trail.add(cellPath(q.x, q.y, opp(q.rot), q.rot as Dir).slice(6));
+      m.pending = { x: q.x + DX[q.rot], y: q.y + DY[q.rot], dir: q.rot as Dir };
+      return;
+    }
     m.trail.add(cellPath(x, y, entry, out));
     m.pending = { x: x + DX[out], y: y + DY[out], dir: out };
   }
@@ -122,6 +133,12 @@ export class TrainSim<M extends SimMover = SimMover> {
   }
 }
 
+/** The other mouth of a tunnel. */
+export function partnerOf(grid: Map<string, Piece>, p: Piece): Piece | undefined {
+  for (const q of grid.values()) if (q.type === 'portal' && q.pair === p.pair && (q.x !== p.x || q.y !== p.y)) return q;
+  return undefined;
+}
+
 /** The level's grid with the child's squares filled in correctly. */
 export function solvedGrid(L: Level) {
   const grid = new Map<string, Piece>();
@@ -151,6 +168,11 @@ export function junctionKeys(L: Level): Set<string> {
     let backs: Dir[];
     if (p.type === 'switch') {
       if (side === p.inDir) { out.add(key(x, y)); backs = [p.out1!, p.out2!]; } else backs = [p.inDir!];
+    } else if (p.type === 'portal') {
+      // came out of this mouth: carry on from the other one
+      const q = side === p.rot ? partnerOf(grid, p) : undefined;
+      if (q) todo.push({ x: q.x + DX[q.rot], y: q.y + DY[q.rot], side: opp(q.rot) });
+      backs = [];
     } else {
       const b = traverse(p, side);
       backs = b === null ? [] : [b];
