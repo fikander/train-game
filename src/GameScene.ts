@@ -114,6 +114,7 @@ export class GameScene extends Phaser.Scene {
   // 3D board (see three/World3D.ts): what the terrain looks like and the track running off the board
   terrain3d: TerrainItem[] = [];
   extraTrack: Piece[] = [];
+  ghosts: { type: 'straight' | 'curve'; x: number; y: number; rot: number }[] = [];
   groundKey = '';
 
   constructor() { super('game'); }
@@ -180,6 +181,8 @@ export class GameScene extends Phaser.Scene {
     }
     this.drawTunnels();
     // grown-ups can turn on faint shadows of the track that fits each square
+    // (in 3D the world draws them from this list, see World3D.build)
+    this.ghosts = hintsOn() ? L.gaps.map(gp => ({ type: gp.type, x: gp.x, y: gp.y, rot: gp.rot })) : [];
     if (hintsOn()) for (const gp of L.gaps) {
       const g = this.add.graphics().setDepth(1).setAlpha(0.16).setPosition(this.px(gp.x + 0.5), this.py(gp.y + 0.5));
       drawPiece(g, { type: gp.type, x: 0, y: 0, rot: gp.rot, fixed: true }, this.cell);
